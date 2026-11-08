@@ -11,6 +11,59 @@ from youtube_client import YouTubeClient, video_body, youtube_http, SCOPES
 
 
 class YouTubeTests(unittest.TestCase):
+    def test_confirmed_channel_restores_after_restart(self):
+        self.client.approve_channel()
+        client = YouTubeClient(None, Settings(self.folder), self.history, self.api)
+        client.identify()
+        self.assertTrue(client.channel_confirmed)
+        self.assertEqual(client.playlist_id, 'playlist-a')
+
+    def test_new_channel_requires_confirmation_even_with_saved_approval(self):
+        self.client.approve_channel()
+        self.api.channels.return_value.list.return_value.execute.return_value = {'items': [
+            {'id': 'channel-b', 'snippet': {'title': 'Other channel'}}]}
+        self.client.identify()
+        self.assertFalse(self.client.channel_confirmed)
+        self.assertEqual(self.client.playlist_id, '')
+
+    def test_different_expected_email_does_not_reuse_channel_approval(self):
+        self.client.approve_channel()
+        self.settings.data['expected_email'] = 'other@example.com'
+        self.client.identify()
+        self.assertFalse(self.client.channel_confirmed)
+
+    def test_auto_connect_without_token_never_opens_browser(self):
+        self.client.secrets = MagicMock()
+        self.client.secrets.read.side_effect = [{'installed': {'client_id': 'offline-test'}}, None]
+        with patch('google_auth_oauthlib.flow.InstalledAppFlow.from_client_config') as flow:
+            with self.assertRaisesRegex(RuntimeError, 'Cần cấp quyền lại'):
+                self.client.connect(interactive=False)
+        flow.assert_not_called()
+
+    def test_auto_connect_refreshes_expired_token_and_restores_approval(self):
+        self.client.approve_channel()
+        self.client.secrets = MagicMock()
+        self.client.secrets.read.side_effect = [{'installed': {'client_id': 'offline-test'}}, {'token': 'fake'}]
+        credentials = MagicMock()
+        credentials.has_scopes.return_value = True
+        credentials.expired = True
+        credentials.refresh_token = 'fake'
+        credentials.valid = False
+        credentials.granted_scopes = None
+        credentials.to_json.return_value = '{"token":"fake"}'
+        credentials.refresh.side_effect = lambda request: setattr(credentials, 'valid', True)
+        session = MagicMock()
+        session.get.return_value.json.return_value = {'email': 'owner@example.com', 'email_verified': True}
+        with patch('google.oauth2.credentials.Credentials.from_authorized_user_info', return_value=credentials), \
+             patch('google.auth.transport.requests.AuthorizedSession', return_value=session), \
+             patch('googleapiclient.discovery.build', return_value=self.api), \
+             patch('youtube_client.youtube_http'), \
+             patch('google_auth_oauthlib.flow.InstalledAppFlow.from_client_config') as flow:
+            self.client.connect(interactive=False)
+        credentials.refresh.assert_called_once()
+        flow.assert_not_called()
+        self.assertTrue(self.client.channel_confirmed)
+
     def test_account_configuration_is_local_and_playlist_is_preserved(self):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)

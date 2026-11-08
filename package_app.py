@@ -7,7 +7,7 @@ FILES = ['app.py', 'core.py', 'storage.py', 'youtube_client.py', 'config.json',
          'metadata.csv', 'README.md', 'START.bat', 'requirements.txt',
          'requirements-lock.txt', '.gitignore', 'package_app.py',
          'SHARING.md', 'README_FIRST.txt', 'build_windows.py', 'requirements-build.txt', 'smoke_check.py',
-         'tests/__init__.py', 'tests/test_core.py', 'tests/test_youtube.py']
+         'tests/__init__.py', 'tests/test_core.py', 'tests/test_youtube.py', 'tests/test_app.py']
 
 
 def package():
@@ -15,11 +15,11 @@ def package():
         path = ROOT / name
         if not path.is_file() or path.is_symlink():
             raise ValueError(f'Missing or unsafe source file: {name}')
-    destination = ROOT / 'dist' / 'youtube-auto-uploader-v0.2.zip'
+    destination = ROOT / 'dist' / 'youtube-auto-uploader-v0.3.zip'
     destination.parent.mkdir(exist_ok=True)
     with ZipFile(destination, 'w', ZIP_DEFLATED) as archive:
         for name in FILES:
-            archive.write(ROOT / name, f'youtube-auto-uploader-v0.2/{name}')
+            archive.write(ROOT / name, f'youtube-auto-uploader-v0.3/{name}')
     return destination
 
 

@@ -1,6 +1,6 @@
 # Gửi app cho bạn bè để cùng upload kênh dùng chung
 
-Kênh dùng chung: **kênh YouTube của bạn**. Chủ kênh tự nhập email và tên playlist qua **Cấu hình tài khoản**. `owner@example.com` trong hướng dẫn chỉ là ví dụ; không có tài khoản cá nhân được nhúng sẵn.
+Kênh dùng chung: **kênh YouTube của bạn**. Chủ kênh tự nhập email và tên playlist qua **Cài đặt → Tài khoản & tên playlist**. `owner@example.com` trong hướng dẫn chỉ là ví dụ; không có tài khoản cá nhân được nhúng sẵn.
 
 ## Chọn cách phù hợp
 
@@ -28,7 +28,7 @@ Chỉ chọn cách này với người và máy bạn tin cậy. Token trên má
 ### 1. Người nhận tải và mở app
 
 1. Mở [Release mới nhất](https://github.com/quoctran-2608/youtube-auto-uploader/releases/latest).
-2. Tải `youtube-auto-uploader-v0.2-windows-x64.zip`, giải nén toàn bộ, mở `YouTubeAutoUploader.exe`.
+2. Tải `youtube-auto-uploader-v0.3-windows-x64.zip`, giải nén toàn bộ, mở `YouTubeAutoUploader.exe`.
 3. Giữ nguyên `_internal`, `config.json` và `metadata.csv` cạnh `.exe`; không chạy trong ZIP.
 
 Gói Windows đã có Python/thư viện, không cần mở terminal hoặc cài Python. Gói source là lựa chọn khác cho người có kỹ thuật. Gói `.exe` chưa ký số; nếu hệ thống bảo vệ chặn, giữ nguyên bảo vệ và dùng bản source hoặc nhờ quản trị viên kiểm tra.
@@ -41,23 +41,23 @@ Bạn có thể ngồi tại máy đó hoặc dùng phiên hỗ trợ từ xa m�
 2. Mở Google Cloud Console, chọn project YouTube Auto Uploader đã có. API đã bật thì dùng lại; không tạo billing hoặc project mới nếu không cần.
 3. Trong Google Auth Platform, kiểm tra **External / Testing** và Test users có tài khoản chủ kênh.
 4. Trong **Clients**, tạo OAuth Client **Desktop app** riêng cho máy nhận, đặt tên dễ nhận biết, ví dụ `Uploader - may ban A`. Tải JSON trực tiếp về thư mục local bảo mật trên máy nhận, ngoài thư mục repo/Drive.
-5. Trong app, **Nhập OAuth JSON** vừa tải → **Connect YouTube**.
+5. Trong app, **Cài đặt → Nhập OAuth JSON** vừa tải → **Kết nối YouTube**.
 6. Chính chủ kênh đọc quyền và xác nhận OAuth trong Google. Không cần cho người bạn biết mật khẩu.
-7. Kiểm tra email, tên kênh, Channel ID và playlist. Đánh dấu xác nhận đúng kênh.
+7. Kiểm tra email, tên kênh, Channel ID và playlist. Xác nhận và ghi nhớ kênh một lần.
 8. Sau khi app kết nối thành công, chủ kênh đăng xuất tài khoản Google khỏi Chrome trên máy nhận và không lưu mật khẩu trong trình duyệt. App giữ token riêng đã được cấp, không cần giữ phiên Gmail mở.
 
 Credentials JSON là cấu hình client, không phải token quyền truy cập của chủ kênh; tuy vậy dự án này vẫn không đưa JSON đó vào GitHub/Drive/ZIP. Mỗi máy tự nhập cấu hình và tự tạo token qua sự đồng ý của chủ kênh. Gói app gửi bạn bè luôn sạch credentials/token.
 
 ### 3. Người bạn dùng hằng ngày
 
-1. Mở app → **Connect YouTube**. Khi token còn hiệu lực, không phải nhập JSON hay đăng nhập lại.
-2. Kiểm tra kênh/playlist → đánh dấu xác nhận đúng kênh.
+1. Mở app. App tự kết nối, kiểm tra kênh/playlist và quét thư mục đã lưu; không cần bấm Connect.
+2. Kênh đã xác nhận và playlist đã chọn được ghi nhớ. Chỉ cần xử lý nếu app báo token hết hạn hoặc kênh/playlist thay đổi.
 3. Chọn thư mục video local hoặc Drive đã tải offline → Quét → chọn một video.
 4. Giữ mặc định **Unlisted / Not made for kids / playlist đã cấu hình**.
 5. Kiểm tra tiêu đề/mô tả → bấm Upload → đọc hộp xác nhận → đồng ý.
 6. Nếu Playlist Pending: retry riêng playlist. Nếu Upload Unknown: kiểm tra Studio và đối chiếu ID; không upload lại.
 
-**Giới hạn Testing:** quyền/refresh token có thể hết hạn sau 7 ngày. Khi đó chủ kênh cần quay lại máy nhận và tự cấp quyền qua **Đổi tài khoản / kênh**. Không có cách bảo đảm “cấp một lần dùng mãi” trong cấu hình Testing này. Chuyển Production/phân phối công khai cần đánh giá yêu cầu OAuth/xác minh riêng; repo không tự thay đổi. [Nguồn Google](https://support.google.com/cloud/answer/15549945?hl=en)
+**Giới hạn Testing:** quyền/refresh token có thể hết hạn sau 7 ngày. Khi đó chủ kênh cần quay lại máy nhận và tự cấp quyền qua **Cài đặt → Cấp quyền lại / đổi kênh**. Không có cách bảo đảm “cấp một lần dùng mãi” trong cấu hình Testing này. Chuyển Production/phân phối công khai cần đánh giá yêu cầu OAuth/xác minh riêng; repo không tự thay đổi. [Nguồn Google](https://support.google.com/cloud/answer/15549945?hl=en)
 
 ### 4. Phân công để tránh trùng giữa nhiều máy
 

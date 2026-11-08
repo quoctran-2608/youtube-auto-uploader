@@ -1,4 +1,4 @@
-"""YouTube Auto Uploader v0.2 — scan, OAuth, and one confirmed upload."""
+"""YouTube Auto Uploader v0.3 — scan, OAuth, and one confirmed upload."""
 from __future__ import annotations
 
 import sys
@@ -118,11 +118,12 @@ class UploaderApp(PreviewApp):
         self.video_url = ''
         super().__init__()
         self.folder.set(self.settings.data.get('last_folder', ''))
-        self.title('YouTube Auto Uploader · v0.2')
-        self.geometry('1160x790')
-        self.minsize(1000, 730)
+        self.title('YouTube Auto Uploader · v0.3')
+        self.geometry('1040x700')
+        self.minsize(880, 620)
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.after(100, self.drain)
+        self.after(300, self.startup)
 
     def action(self, parent, text, command, **pack):
         button = ttk.Button(parent, text=text, command=command)
@@ -131,66 +132,111 @@ class UploaderApp(PreviewApp):
         return button
 
     def _setup(self):
-        super()._setup()
-        container = self.winfo_children()[0]
-        children = container.winfo_children()
-        children[1].configure(text='v0.2 · Quét thư mục, xác nhận kênh và upload từng video.', foreground='#555')
-        # Retain the original scan table and CSV flow.
-        for button in children[3].winfo_children():
-            if isinstance(button, ttk.Button):
-                self.actions.append(button)
-        children[3].winfo_children()[0].configure(text='Quét video')
-        self.table.heading('publish_at', text='Lịch tham khảo')
-        self.table.configure(height=6)
-        children[-1].configure(text=f'Dữ liệu local bảo mật: {self.local}')
-        connection = ttk.LabelFrame(container, text='YouTube · Kết nối & mặc định', padding=10)
-        connection.pack(fill='x', pady=(0, 12), before=children[2])
-        bar = ttk.Frame(connection)
-        bar.pack(fill='x')
-        self.action(bar, 'Cấu hình tài khoản', self.configure_account, side='left', padx=(0, 6))
-        self.action(bar, 'Nhập OAuth JSON', self.import_credentials, side='left')
-        self.action(bar, 'Connect YouTube', self.connect, side='left', padx=6)
-        self.action(bar, 'Đổi tài khoản / kênh', lambda: self.connect(True), side='left')
-        self.connection = tk.StringVar(value='Chưa kết nối YouTube')
-        ttk.Label(connection, textvariable=self.connection, wraplength=1050).pack(anchor='w', pady=(8, 3))
-        self.confirmed = tk.BooleanVar(value=False)
-        self.confirm_check = ttk.Checkbutton(connection, text='Tôi xác nhận đúng tên kênh và Channel ID ở trên',
-            variable=self.confirmed, command=self.confirm_channel, state='disabled')
-        self.confirm_check.pack(anchor='w')
-        self.playlist = tk.StringVar(value=f'{self.playlist_title} · chưa xác nhận bằng API')
-        playlist_bar = ttk.Frame(connection)
-        playlist_bar.pack(fill='x', pady=4)
-        ttk.Label(playlist_bar, textvariable=self.playlist, wraplength=850).pack(side='left')
-        self.action(playlist_bar, 'Chọn playlist', self.choose_playlist, side='right')
-        self.defaults_label = tk.StringVar()
-        ttk.Label(connection, textvariable=self.defaults_label, foreground='#17604a').pack(anchor='w')
-        self.show_defaults()
-
-        bottom = ttk.Frame(container)
-        bottom.pack(fill='x', before=children[-2], pady=(10, 0))
-        self.details = tk.StringVar(value='Chọn một video. Metadata và lịch gốc vẫn được giữ để xem trước.')
-        ttk.Label(bottom, textvariable=self.details, wraplength=1050).pack(anchor='w')
-        options = ttk.LabelFrame(bottom, text='Cấu hình riêng cho video đang chọn', padding=8)
-        options.pack(fill='x', pady=6)
-        ttk.Label(options, text='Visibility:').pack(side='left')
+        style = ttk.Style(self)
+        if 'clam' in style.theme_names():
+            style.theme_use('clam')
+        style.configure('.', font=('Segoe UI', 10), background='#f3f6fa')
+        style.configure('TButton', padding=(10, 6))
+        style.configure('Treeview', background='white', fieldbackground='white', rowheight=29)
+        style.configure('Treeview.Heading', font=('Segoe UI', 10, 'bold'))
+        style.configure('Upload.TButton', background='#175bc0', foreground='white', padding=(18, 9))
+        style.map('Upload.TButton', background=[('active', '#104a9e'), ('disabled', '#a0afc5')])
+        container = ttk.Frame(self, padding=18)
+        container.pack(fill='both', expand=True)
+        header = ttk.Frame(container)
+        header.pack(fill='x')
+        ttk.Label(header, text='YouTube Auto Uploader', font=('Segoe UI', 19, 'bold')).pack(side='left')
+        self.action(header, 'Cài đặt', self.show_settings, side='right')
+        self.action(header, 'Lịch sử', self.show_history, side='right', padx=8)
+        self.connection = tk.StringVar(value='Đang chuẩn bị kết nối…')
+        ttk.Label(container, textvariable=self.connection, wraplength=960, foreground='#285b8d').pack(anchor='w', pady=(8, 3))
+        self.playlist = tk.StringVar(value=self.playlist_title)
+        ttk.Label(container, textvariable=self.playlist, wraplength=960, foreground='#576779').pack(anchor='w', pady=(0, 12))
+        self.reconnect = self.action(container, 'Kết nối YouTube', self.connect, anchor='w', pady=(0, 8))
+        self.reconnect.pack_forget()
+        source = ttk.Frame(container)
+        source.pack(fill='x', pady=(0, 10))
+        ttk.Label(source, text='Thư mục video').pack(side='left')
+        ttk.Entry(source, textvariable=self.folder).pack(side='left', fill='x', expand=True, padx=8)
+        self.action(source, 'Chọn thư mục', self.choose_folder, side='left')
+        self.action(source, 'Làm mới', self.scan, side='left', padx=(8, 0))
+        self.count = ttk.Label(container, text='0 video')
+        self.count.pack(anchor='w', pady=(0, 5))
+        frame = ttk.Frame(container)
+        frame.pack(fill='both', expand=True)
+        columns = ('filename', 'title', 'size_mb', 'publish_at')
+        self.table = ttk.Treeview(frame, columns=columns, displaycolumns=('filename', 'title', 'size_mb'), show='headings', selectmode='browse', height=8)
+        for key, title, width in [('filename', 'Tệp video', 340), ('title', 'Tiêu đề', 440), ('size_mb', 'MB', 75)]:
+            self.table.heading(key, text=title)
+            self.table.column(key, width=width, minwidth=60, stretch=key != 'size_mb')
+        scrollbar = ttk.Scrollbar(frame, orient='vertical', command=self.table.yview)
+        self.table.configure(yscrollcommand=scrollbar.set)
+        self.table.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        self.details = tk.StringVar(value='Chọn một video để xem metadata và upload.')
+        ttk.Label(container, textvariable=self.details, wraplength=960).pack(anchor='w', pady=(10, 6))
+        options = ttk.Frame(container)
+        options.pack(fill='x')
+        ttk.Label(options, text='Chế độ xem').pack(side='left')
         self.privacy = tk.StringVar(value=self.settings.data['privacy_status'])
-        self.privacy_box = ttk.Combobox(options, textvariable=self.privacy,
-            values=('unlisted', 'private', 'public'), state='readonly', width=12)
-        self.privacy_box.pack(side='left', padx=(6, 12))
+        self.privacy_box = ttk.Combobox(options, textvariable=self.privacy, values=('unlisted', 'private', 'public'), state='readonly', width=11)
+        self.privacy_box.pack(side='left', padx=(8, 18))
         self.kids = tk.BooleanVar(value=self.settings.data['made_for_kids'])
-        self.kids_check = ttk.Checkbutton(options, text='Made for kids (bỏ chọn = Not made for kids)', variable=self.kids)
+        self.kids_check = ttk.Checkbutton(options, text='Dành cho trẻ em', variable=self.kids)
         self.kids_check.pack(side='left')
-        self.action(options, 'Lưu làm mặc định', self.save_defaults, side='right')
-        bar = ttk.Frame(bottom)
-        bar.pack(fill='x')
-        self.action(bar, 'Upload video đã chọn…', self.upload_selected, side='left')
-        self.action(bar, 'Lịch sử / Retry playlist', self.show_history, side='left', padx=6)
-        self.action(bar, 'Mở video vừa upload', self.open_result, side='left')
-        self.progress = ttk.Progressbar(bar, maximum=100)
-        self.progress.pack(side='left', fill='x', expand=True, padx=(10, 0))
-        self.result = tk.StringVar(value='Chưa upload video trong phiên này.')
-        ttk.Label(bottom, textvariable=self.result, wraplength=1050).pack(anchor='w', pady=6)
+        self.action(options, 'Lưu mặc định', self.save_defaults, side='right')
+        footer = ttk.Frame(container)
+        footer.pack(fill='x', pady=(12, 0))
+        self.upload_button = self.action(footer, 'Upload video đã chọn…', self.upload_selected, side='left')
+        self.upload_button.configure(style='Upload.TButton')
+        self.action(footer, 'Mở video', self.open_result, side='left', padx=8)
+        self.progress = ttk.Progressbar(footer, maximum=100)
+        self.progress.pack(side='left', fill='x', expand=True, padx=(8, 0))
+        self.result = tk.StringVar(value='')
+        ttk.Label(container, textvariable=self.result, wraplength=960).pack(anchor='w', pady=(7, 0))
+        ttk.Label(container, textvariable=self.info, wraplength=960, foreground='#576779').pack(anchor='w', pady=(5, 0))
         self.table.bind('<<TreeviewSelect>>', self.selection_changed)
+        self.settings_window = tk.Toplevel(self)
+        self.settings_window.withdraw()
+        self.settings_window.title('Cài đặt YouTube Auto Uploader')
+        self.settings_window.protocol('WM_DELETE_WINDOW', self.settings_window.withdraw)
+        settings = ttk.Frame(self.settings_window, padding=18)
+        settings.pack(fill='both', expand=True)
+        ttk.Label(settings, text='Thiết lập một lần trên máy này', font=('Segoe UI', 14, 'bold')).pack(anchor='w', pady=(0, 12))
+        ttk.Label(settings, text='Cấu hình email và playlist, nhập OAuth JSON, rồi kết nối.\nCác lần sau app tự kết nối và kiểm tra kênh đã lưu.', wraplength=570).pack(anchor='w', pady=(0, 12))
+        for title, command in [('Tài khoản & tên playlist', self.configure_account), ('Nhập OAuth JSON', self.import_credentials), ('Kết nối YouTube', self.connect), ('Cấp quyền lại / đổi kênh', lambda: self.connect(True)), ('Chọn playlist trùng tên', self.choose_playlist), ('Xuất CSV xem trước', self.export_csv)]:
+            self.action(settings, title, command, fill='x', pady=3)
+        self.confirmed = tk.BooleanVar(value=False)
+        self.confirm_check = ttk.Checkbutton(settings, variable=self.confirmed, command=self.confirm_channel)
+        self.defaults_label = tk.StringVar()
+        ttk.Label(settings, textvariable=self.defaults_label, wraplength=570).pack(anchor='w', pady=12)
+        ttk.Label(settings, text=f'Dữ liệu chỉ lưu trên máy này:\n{self.local}', wraplength=570, foreground='#576779').pack(anchor='w')
+        self.show_defaults()
+        self.update_controls()
+
+    def show_settings(self):
+        self.settings_window.geometry(f'620x510+{max(0, self.winfo_x() + 50)}+{max(0, self.winfo_y() + 50)}')
+        self.settings_window.deiconify()
+        self.settings_window.lift()
+
+    def update_controls(self):
+        if hasattr(self, 'upload_button'):
+            ready = self.client.channel_confirmed and bool(self.client.playlist_id) and not self.busy and bool(self.table.selection())
+            self.upload_button.configure(state='normal' if ready else 'disabled')
+
+    def startup(self):
+        if self.settings.data.get('expected_email') and self.client.secrets.read('credentials') and self.client.secrets.read('token'):
+            self.connection.set('Đang kết nối và kiểm tra kênh đã lưu…')
+            self.run_task(lambda: self.client.connect(interactive=False), self.connected, silent=True)
+        else:
+            self.connection.set('Thiết lập lần đầu trong Cài đặt để bắt đầu.')
+            self.reconnect.pack(anchor='w', pady=(0, 8), before=self.count)
+            self.show_settings()
+            self.after(100, self.scan_saved_folder)
+
+    def scan_saved_folder(self):
+        if self.folder.get() and not self.busy:
+            self.scan()
 
     @property
     def playlist_title(self):
@@ -201,10 +247,12 @@ class UploaderApp(PreviewApp):
         audience = 'Made for kids' if data['made_for_kids'] else 'Not made for kids'
         self.defaults_label.set(f"Mặc định đã lưu: Audience = {audience} · Visibility = {data['privacy_status'].title()} · Không đặt lịch công khai")
 
-    def run_task(self, function, callback):
+    def run_task(self, function, callback, silent=False):
         if self.busy:
             return
         self.busy = True
+        self.silent_task = silent
+        self.scan_after_failure = callback == self.connected
         for button in self.actions:
             if button.winfo_exists():
                 button.configure(state='disabled')
@@ -242,7 +290,12 @@ class UploaderApp(PreviewApp):
                     if not self.client.channel:
                         self.connection.set('Chưa kết nối / kết nối thất bại')
                     self.update_playlist()
-                    messagebox.showerror('Chưa hoàn tất', event[1], parent=self)
+                    self.reconnect.pack(anchor='w', pady=(0, 8), before=self.count)
+                    if not self.silent_task:
+                        messagebox.showerror('Chưa hoàn tất', event[1], parent=self)
+                    elif self.scan_after_failure:
+                        self.after(100, self.scan_saved_folder)
+                self.update_controls()
                 if getattr(self, 'history_window', None) and self.history_window.winfo_exists():
                     self.refresh_history()
         except queue.Empty:
@@ -273,6 +326,7 @@ class UploaderApp(PreviewApp):
             self.confirmed.set(False)
             self.connection.set('Cấu hình đã lưu local. Hãy kết nối lại YouTube.')
             self.update_playlist()
+        self.update_controls()
 
     def import_credentials(self):
         path = filedialog.askopenfilename(title='OAuth JSON loại Desktop app', filetypes=[('JSON', '*.json')])
@@ -283,9 +337,12 @@ class UploaderApp(PreviewApp):
         self.confirmed.set(False)
         self.connection.set('Chưa kết nối YouTube')
         self.update_playlist()
+        self.update_controls()
         self.info.set(f'Đã nhập credentials project {project}; bản lưu local được mã hóa Windows DPAPI. Bấm Connect YouTube.')
 
     def connect(self, new_login=False):
+        if self.busy:
+            return
         email_label = self.settings.data.get('expected_email') or '(email đã cấu hình)'
         request_consent = new_login or not self.client.secrets.read('token')
         if request_consent and not messagebox.askokcancel('Quyền truy cập OAuth',
@@ -300,17 +357,33 @@ class UploaderApp(PreviewApp):
         self.run_task(lambda: self.client.connect(new_login), self.connected)
 
     def connected(self, channel):
-        self.connection.set(f"Đã kết nối {self.client.email} · Kênh: {channel['snippet']['title']} · Channel ID: {channel['id']}")
-        self.confirmed.set(False)
+        self.connection.set(f"Đã kết nối: {channel['snippet']['title']}")
+        self.reconnect.pack_forget()
+        if not self.client.channel_confirmed:
+            approved = self.settings.data.get('approved_channel_id') == channel['id'] and self.settings.data.get('approved_email') == self.settings.data.get('expected_email')
+            if not approved:
+                if messagebox.askyesno('Xác nhận kênh lần đầu',
+                    f"Kênh: {channel['snippet']['title']}\nChannel ID: {channel['id']}\n\nDùng và ghi nhớ kênh này trên máy?", parent=self):
+                    self.client.approve_channel()
+            else:
+                self.client.channel_confirmed = True
+        self.confirmed.set(self.client.channel_confirmed)
         self.update_playlist()
-        self.info.set('Kiểm tra tên kênh / Channel ID và đánh dấu xác nhận. Chưa upload video.')
         if not self.client.playlists:
-            messagebox.showwarning('Không tìm thấy playlist', f'Không có playlist khớp chính xác “{self.playlist_title}” trên kênh này. App không tự tạo playlist.', parent=self)
+            self.info.set('Không tìm thấy playlist đúng tên trên kênh này. Kiểm tra trong Cài đặt.')
         elif not self.client.playlist_id:
             self.choose_playlist()
+        elif self.client.channel_confirmed:
+            self.info.set('Sẵn sàng. Chọn một video để upload.')
+            self.settings_window.withdraw()
+        else:
+            self.info.set('Kênh chưa được chấp nhận. Mở Cài đặt để kết nối lại.')
+        self.update_controls()
+        self.after(100, self.scan_saved_folder)
 
     def confirm_channel(self):
-        self.client.channel_confirmed = bool(self.client.channel and self.confirmed.get())
+        if self.client.channel and self.confirmed.get():
+            self.client.approve_channel()
 
     def update_playlist(self):
         self.playlist.set(f"{self.playlist_title} · {self.client.playlist_id or 'chưa chọn / không tìm thấy'}")
@@ -335,6 +408,7 @@ class UploaderApp(PreviewApp):
             if selected:
                 self.client.select_playlist(choices[selected[0]]['id'])
                 self.update_playlist()
+                self.update_controls()
                 dialog.destroy()
         ttk.Button(dialog, text='Dùng playlist đã chọn', command=choose).pack(pady=10)
         dialog.grab_set()
@@ -346,14 +420,36 @@ class UploaderApp(PreviewApp):
             self.privacy.set(self.settings.data['privacy_status'])
             self.kids.set(self.settings.data['made_for_kids'])
             self.details.set(f"{row['title']} · Tags: {row['tags'] or '(trống)'}\nMô tả: {row['description'][:180] or '(trống)'}")
+        self.update_controls()
+
+    def choose_folder(self):
+        folder = filedialog.askdirectory(title='Chọn thư mục video', initialdir=self.folder.get() or None)
+        if folder:
+            self.folder.set(folder)
+            self.settings.data['last_folder'] = folder
+            self.settings.save()
+            self.scan()
 
     def scan(self):
-        if not self.busy:
-            super().scan()
-            if self.rows:
-                self.settings.data['last_folder'] = self.folder.get()
-                self.settings.save()
-                self.info.set(f'Đã quét {len(self.rows)} video. Lịch tham khảo không được gửi lên YouTube. Chưa upload.')
+        if self.busy or not self.folder.get().strip():
+            return
+        folder = Path(self.folder.get()).expanduser()
+        self.settings.data['last_folder'] = str(folder)
+        self.settings.save()
+        self.rows = []
+        self.table.delete(*self.table.get_children())
+        def work():
+            config = read_config(ROOT / 'config.json')
+            path = Path(config.get('metadata_csv', 'metadata.csv'))
+            return preview(folder, config, read_metadata(path if path.is_absolute() else ROOT / path))
+        def done(rows):
+            self.rows = rows
+            self.table.delete(*self.table.get_children())
+            for row in rows:
+                self.table.insert('', 'end', values=(row['filename'], row['title'], row['size_mb'], row['publish_at']))
+            self.count.configure(text=f'{len(rows)} video')
+            self.info.set(f'Đã quét {len(rows)} video. Chọn một video để upload.' if self.client.channel_confirmed and self.client.playlist_id else 'Đã quét thư mục. Hoàn tất kết nối trong Cài đặt để upload.')
+        self.run_task(work, done, silent=True)
 
     def save_defaults(self):
         self.settings.data.update(privacy_status=self.privacy.get(), made_for_kids=self.kids.get())

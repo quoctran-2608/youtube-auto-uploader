@@ -82,7 +82,7 @@ class YouTubeClient:
         self.secrets.write('token', {})
         return client.get('project_id', '')
 
-    def connect(self, new_login=False):
+    def connect(self, new_login=False, interactive=True):
         from google.auth.transport.requests import Request, AuthorizedSession
         from google.oauth2.credentials import Credentials
         from google_auth_oauthlib.flow import InstalledAppFlow
@@ -108,6 +108,8 @@ class YouTubeClient:
             except Exception:
                 raise RuntimeError('Token hết hạn hoặc bị thu hồi. Chọn Đổi tài khoản / kênh để cấp quyền lại.') from None
         if not creds or not creds.valid:
+            if not interactive:
+                raise RuntimeError('Cần cấp quyền lại. Mở Cài đặt và chọn Kết nối YouTube.')
             flow = InstalledAppFlow.from_client_config(config, SCOPES, autogenerate_code_verifier=True)
             chrome_paths = [Path(os.environ.get(env, '')) / suffix for env, suffix in (
                 ('PROGRAMFILES', 'Google/Chrome/Application/chrome.exe'),
@@ -165,13 +167,26 @@ class YouTubeClient:
         else:
             self.settings.data['playlist_id'] = ''
             self.settings.save()
+        self.channel_confirmed = (self.settings.data.get('approved_channel_id') == self.channel['id']
+            and self.settings.data.get('approved_email') == self.settings.data.get('expected_email')
+            and bool(self.playlist_id))
         return self.channel
+
+    def approve_channel(self):
+        if not self.channel:
+            raise ValueError('Chưa kết nối kênh.')
+        self.settings.data.update(approved_channel_id=self.channel['id'],
+            approved_email=self.settings.data['expected_email'])
+        self.settings.save()
+        self.channel_confirmed = True
 
     def select_playlist(self, playlist_id):
         if not any(p['id'] == playlist_id for p in self.playlists):
             raise ValueError('Playlist không thuộc danh sách đã xác nhận của kênh này.')
         self.playlist_id = playlist_id
         self.settings.data['playlist_id'] = playlist_id
+        if self.channel and self.settings.data.get('approved_channel_id') == self.channel['id'] and self.settings.data.get('approved_email') == self.settings.data.get('expected_email'):
+            self.channel_confirmed = True
         self.settings.save()
 
     def validate_context(self, playlist_id):
