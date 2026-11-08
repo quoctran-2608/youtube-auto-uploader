@@ -1,0 +1,9 @@
+{
+  "scan_subfolders": true,
+  "start_date": "2026-11-12",
+  "daily_times": ["08:00", "19:00"],
+  "timezone": "Asia/Ho_Chi_Minh",
+  "default_description": "",
+  "default_tags": "",
+  "metadata_csv": "metadata.csv"
+}
