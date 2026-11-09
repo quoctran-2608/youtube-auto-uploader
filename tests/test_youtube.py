@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from storage import History, Settings, PLAYLIST_TITLE, fingerprint
-from youtube_client import YouTubeClient, video_body, youtube_http, SCOPES
+from youtube_client import YouTubeClient, video_body, youtube_http, SCOPES, QuotaWait
 
 
 class YouTubeTests(unittest.TestCase):
@@ -171,6 +171,26 @@ class YouTubeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'chưa rõ kết quả'):
             self.client.upload(self.row)
         self.assertEqual(self.api.videos.return_value.insert.call_count, 1)
+
+    def test_definitive_quota_rejection_can_be_retried(self):
+        from googleapiclient.errors import HttpError
+        response = MagicMock(status=403, reason='Forbidden')
+        error = HttpError(response, b'{"error":{"errors":[{"reason":"quotaExceeded"}]}}')
+        self.api.videos.return_value.insert.return_value.next_chunk.side_effect = error
+        with self.assertRaises(QuotaWait):
+            self.client.upload(self.row)
+        self.assertEqual(self.history.recent(), [])
+
+    def test_quota_after_chunk_is_unknown_and_never_retried(self):
+        from googleapiclient.errors import HttpError
+        response = MagicMock(status=403, reason='Forbidden')
+        error = HttpError(response, b'{"error":{"errors":[{"reason":"quotaExceeded"}]}}')
+        status = MagicMock()
+        status.progress.return_value = 0.5
+        self.api.videos.return_value.insert.return_value.next_chunk.side_effect = [(status, None), error]
+        with self.assertRaisesRegex(RuntimeError, 'chặn upload lại'):
+            self.client.upload(self.row)
+        self.assertEqual(self.history.recent()[0]['state'], 'Upload Unknown')
 
     def test_playlist_exact_match_and_pagination(self):
         other = {'id': 'wrong', 'snippet': {'title': PLAYLIST_TITLE + ' ', 'channelId': 'channel-a'}}

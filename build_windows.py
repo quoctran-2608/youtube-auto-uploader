@@ -22,7 +22,7 @@ def build():
     for name in ['config.json', 'metadata.csv', 'README.md', 'SHARING.md', 'README_FIRST.txt']:
         shutil.copyfile(ROOT / name, folder / name)
     # PyInstaller output is generated in its own directory; never copy AppData.
-    archive_path = ROOT / 'dist' / 'youtube-auto-uploader-v0.3-windows-x64.zip'
+    archive_path = ROOT / 'dist' / 'youtube-auto-uploader-v0.4-windows-x64.zip'
     with ZipFile(archive_path, 'w', ZIP_DEFLATED) as archive:
         for path in sorted(folder.rglob('*')):
             if path.is_file():

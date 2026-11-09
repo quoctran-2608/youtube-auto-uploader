@@ -13,6 +13,23 @@ SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl',
           'openid', 'https://www.googleapis.com/auth/userinfo.email']
 
 
+def quota_reason(error):
+    try:
+        status = error.resp.status
+        reason = json.loads(error.content)['error']['errors'][0]['reason']
+        if (status, reason) in ((403, 'quotaExceeded'), (400, 'uploadLimitExceeded')):
+            return reason
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+        pass
+    return ''
+
+
+class QuotaWait(RuntimeError):
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__(f'YouTube báo giới hạn: {reason}')
+
+
 def friendly_error(error):
     # Do not log HTTP URLs, headers, credentials or resumable session URIs.
     status = getattr(getattr(error, 'resp', None), 'status', None)
@@ -286,8 +303,10 @@ class YouTubeClient:
             record_id = self.history.claim(self.channel['id'], digest, row, self.playlist_id, privacy, kids)
             try:
                 response = None
+                chunk_received = False
                 while response is None:
                     status, response = request.next_chunk(num_retries=5)
+                    chunk_received = True
                     if status:
                         progress(status.progress() * 100, f'Đang upload {status.progress():.0%}')
                 video_id = response.get('id', '')
@@ -296,6 +315,10 @@ class YouTubeClient:
                 # Persist ID BEFORE any progress/UI, playlist or verification requests.
                 self.history.update(record_id, video_id=video_id, state='Playlist Pending', error='')
             except Exception as error:
+                reason = quota_reason(error)
+                if reason and not chunk_received:
+                    self.history.release_rejected(record_id)
+                    raise QuotaWait(reason) from None
                 self.history.update(record_id, state='Upload Unknown', error=friendly_error(error))
                 raise RuntimeError('Upload dừng, kết quả chưa chắc chắn. Đã chặn upload lại tệp này; kiểm tra YouTube Studio.') from None
         finally:

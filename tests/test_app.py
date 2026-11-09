@@ -58,6 +58,37 @@ class StartupTests(unittest.TestCase):
                     app.lock.close()
                     app.destroy()
 
+    def test_multiple_selection_is_uploaded_sequentially_after_one_confirmation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            with patch('app.local_directory', return_value=folder), patch.object(UploaderApp, 'startup'):
+                app = UploaderApp()
+            try:
+                app.client.channel = {'id': 'demo', 'snippet': {'title': 'Channel'}}
+                app.client.channel_confirmed = True
+                app.client.playlist_id = 'playlist'
+                app.rows = []
+                for name in ('one', 'two'):
+                    row = {'path': str(folder / (name + '.mp4')), 'filename': name + '.mp4',
+                           'title': name, 'tags': '', 'description': '', 'size_mb': 1, 'publish_at': ''}
+                    app.rows.append(row)
+                    app.table.insert('', 'end', values=(row['filename'], name, 1, ''))
+                app.table.selection_set(app.table.get_children())
+                def upload(row, privacy, kids, progress):
+                    return {'id': len(app.client.upload.call_args_list), 'video_id': 'abcdefghijk',
+                            'state': 'Uploaded', 'verified': 'yes', 'error': ''}
+                app.client.upload = MagicMock(side_effect=upload)
+                with patch('app.messagebox.askyesno', return_value=True) as confirm:
+                    app.upload_selected()
+                    self.pump(app, lambda: len(app.upload_queue.all()) == 2 and all(x['state'] == 'done' for x in app.upload_queue.all()))
+                    confirm.assert_called_once()
+                self.assertEqual([call.args[0]['title'] for call in app.client.upload.call_args_list], ['one', 'two'])
+            finally:
+                for identifier in app.tk.call('after', 'info'):
+                    app.after_cancel(identifier)
+                app.lock.close()
+                app.destroy()
+
     def test_startup_offline_and_missing_folder_do_not_loop_or_prompt(self):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)

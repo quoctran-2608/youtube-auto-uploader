@@ -28,7 +28,7 @@ Chỉ chọn cách này với người và máy bạn tin cậy. Token trên má
 ### 1. Người nhận tải và mở app
 
 1. Mở [Release mới nhất](https://github.com/quoctran-2608/youtube-auto-uploader/releases/latest).
-2. Tải `youtube-auto-uploader-v0.3-windows-x64.zip`, giải nén toàn bộ, mở `YouTubeAutoUploader.exe`.
+2. Tải `youtube-auto-uploader-v0.4-windows-x64.zip`, giải nén toàn bộ, mở `YouTubeAutoUploader.exe`.
 3. Giữ nguyên `_internal`, `config.json` và `metadata.csv` cạnh `.exe`; không chạy trong ZIP.
 
 Gói Windows đã có Python/thư viện, không cần mở terminal hoặc cài Python. Gói source là lựa chọn khác cho người có kỹ thuật. Gói `.exe` chưa ký số; nếu hệ thống bảo vệ chặn, giữ nguyên bảo vệ và dùng bản source hoặc nhờ quản trị viên kiểm tra.
@@ -52,9 +52,9 @@ Credentials JSON là cấu hình client, không phải token quyền truy cập 
 
 1. Mở app. App tự kết nối, kiểm tra kênh/playlist và quét thư mục đã lưu; không cần bấm Connect.
 2. Kênh đã xác nhận và playlist đã chọn được ghi nhớ. Chỉ cần xử lý nếu app báo token hết hạn hoặc kênh/playlist thay đổi.
-3. Chọn thư mục video local hoặc Drive đã tải offline → Quét → chọn một video.
+3. Chọn thư mục video local hoặc Drive đã tải offline → Quét → chọn một hoặc nhiều video.
 4. Giữ mặc định **Unlisted / Not made for kids / playlist đã cấu hình**.
-5. Kiểm tra tiêu đề/mô tả → bấm Upload → đọc hộp xác nhận → đồng ý.
+5. Kiểm tra tiêu đề/mô tả → thêm vào hàng đợi → đọc hộp xác nhận → đồng ý. Giữ app mở và máy không ngủ để tải; app tự tiếp tục sau khi mở lại.
 6. Nếu Playlist Pending: retry riêng playlist. Nếu Upload Unknown: kiểm tra Studio và đối chiếu ID; không upload lại.
 
 **Giới hạn Testing:** quyền/refresh token có thể hết hạn sau 7 ngày. Khi đó chủ kênh cần quay lại máy nhận và tự cấp quyền qua **Cài đặt → Cấp quyền lại / đổi kênh**. Không có cách bảo đảm “cấp một lần dùng mãi” trong cấu hình Testing này. Chuyển Production/phân phối công khai cần đánh giá yêu cầu OAuth/xác minh riêng; repo không tự thay đổi. [Nguồn Google](https://support.google.com/cloud/answer/15549945?hl=en)

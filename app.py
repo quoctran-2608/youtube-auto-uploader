@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import json
 import queue
 import threading
 import webbrowser
@@ -12,6 +13,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from core import preview, read_config, read_metadata, save_preview
 from storage import History, InstanceLock, SecretStore, Settings, local_directory
 from youtube_client import YouTubeClient, friendly_error
+from upload_queue import UploadQueue
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 
@@ -111,6 +113,7 @@ class UploaderApp(PreviewApp):
         self.settings = Settings(self.local)
         self.settings.save()
         self.history = History(self.local)
+        self.upload_queue = UploadQueue(self.history)
         self.client = YouTubeClient(SecretStore(self.local), self.settings, self.history)
         self.busy = False
         self.events = queue.Queue()
@@ -118,12 +121,13 @@ class UploaderApp(PreviewApp):
         self.video_url = ''
         super().__init__()
         self.folder.set(self.settings.data.get('last_folder', ''))
-        self.title('YouTube Auto Uploader · v0.3')
+        self.title('YouTube Auto Uploader · v0.4')
         self.geometry('1040x700')
         self.minsize(880, 620)
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.after(100, self.drain)
         self.after(300, self.startup)
+        self.queue_timer = self.after(1500, self.queue_tick)
 
     def action(self, parent, text, command, **pack):
         button = ttk.Button(parent, text=text, command=command)
@@ -148,6 +152,7 @@ class UploaderApp(PreviewApp):
         ttk.Label(header, text='YouTube Auto Uploader', font=('Segoe UI', 19, 'bold')).pack(side='left')
         self.action(header, 'Cài đặt', self.show_settings, side='right')
         self.action(header, 'Lịch sử', self.show_history, side='right', padx=8)
+        self.action(header, 'Hàng đợi', self.show_queue, side='right')
         self.connection = tk.StringVar(value='Đang chuẩn bị kết nối…')
         ttk.Label(container, textvariable=self.connection, wraplength=960, foreground='#285b8d').pack(anchor='w', pady=(8, 3))
         self.playlist = tk.StringVar(value=self.playlist_title)
@@ -160,12 +165,13 @@ class UploaderApp(PreviewApp):
         ttk.Entry(source, textvariable=self.folder).pack(side='left', fill='x', expand=True, padx=8)
         self.action(source, 'Chọn thư mục', self.choose_folder, side='left')
         self.action(source, 'Làm mới', self.scan, side='left', padx=(8, 0))
+        self.action(source, 'Chọn tất cả', lambda: self.table.selection_set(self.table.get_children()), side='left', padx=(8, 0))
         self.count = ttk.Label(container, text='0 video')
         self.count.pack(anchor='w', pady=(0, 5))
         frame = ttk.Frame(container)
         frame.pack(fill='both', expand=True)
         columns = ('filename', 'title', 'size_mb', 'publish_at')
-        self.table = ttk.Treeview(frame, columns=columns, displaycolumns=('filename', 'title', 'size_mb'), show='headings', selectmode='browse', height=8)
+        self.table = ttk.Treeview(frame, columns=columns, displaycolumns=('filename', 'title', 'size_mb'), show='headings', selectmode='extended', height=8)
         for key, title, width in [('filename', 'Tệp video', 340), ('title', 'Tiêu đề', 440), ('size_mb', 'MB', 75)]:
             self.table.heading(key, text=title)
             self.table.column(key, width=width, minwidth=60, stretch=key != 'size_mb')
@@ -173,7 +179,7 @@ class UploaderApp(PreviewApp):
         self.table.configure(yscrollcommand=scrollbar.set)
         self.table.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
-        self.details = tk.StringVar(value='Chọn một video để xem metadata và upload.')
+        self.details = tk.StringVar(value='Giữ Ctrl hoặc Shift để chọn nhiều video; Ctrl+A chọn tất cả.')
         ttk.Label(container, textvariable=self.details, wraplength=960).pack(anchor='w', pady=(10, 6))
         options = ttk.Frame(container)
         options.pack(fill='x')
@@ -187,7 +193,7 @@ class UploaderApp(PreviewApp):
         self.action(options, 'Lưu mặc định', self.save_defaults, side='right')
         footer = ttk.Frame(container)
         footer.pack(fill='x', pady=(12, 0))
-        self.upload_button = self.action(footer, 'Upload video đã chọn…', self.upload_selected, side='left')
+        self.upload_button = self.action(footer, 'Thêm video vào hàng đợi…', self.upload_selected, side='left')
         self.upload_button.configure(style='Upload.TButton')
         self.action(footer, 'Mở video', self.open_result, side='left', padx=8)
         self.progress = ttk.Progressbar(footer, maximum=100)
@@ -196,6 +202,7 @@ class UploaderApp(PreviewApp):
         ttk.Label(container, textvariable=self.result, wraplength=960).pack(anchor='w', pady=(7, 0))
         ttk.Label(container, textvariable=self.info, wraplength=960, foreground='#576779').pack(anchor='w', pady=(5, 0))
         self.table.bind('<<TreeviewSelect>>', self.selection_changed)
+        self.table.bind('<Control-a>', lambda event: self.table.selection_set(self.table.get_children()))
         self.settings_window = tk.Toplevel(self)
         self.settings_window.withdraw()
         self.settings_window.title('Cài đặt YouTube Auto Uploader')
@@ -420,6 +427,8 @@ class UploaderApp(PreviewApp):
             self.privacy.set(self.settings.data['privacy_status'])
             self.kids.set(self.settings.data['made_for_kids'])
             self.details.set(f"{row['title']} · Tags: {row['tags'] or '(trống)'}\nMô tả: {row['description'][:180] or '(trống)'}")
+            if len(selected) > 1:
+                self.details.set(f'Đã chọn {len(selected)} video. Tải lần lượt theo thứ tự trong danh sách.')
         self.update_controls()
 
     def choose_folder(self):
@@ -470,21 +479,96 @@ class UploaderApp(PreviewApp):
         if not selected:
             messagebox.showinfo('Chọn video', 'Chọn đúng một video trong danh sách.', parent=self)
             return
-        row = dict(self.rows[self.table.index(selected[0])])
+        rows = [dict(self.rows[self.table.index(item)]) for item in sorted(selected, key=self.table.index)]
         privacy, kids = self.privacy.get(), self.kids.get()
         audience = 'Made for kids' if kids else 'Not made for kids'
-        if not messagebox.askyesno('Đồng ý upload video này?',
-            f"Tệp: {row['filename']}\nTiêu đề: {row['title']}\n"
+        if not messagebox.askyesno('Xác nhận hàng đợi upload',
+            f"Số video: {len(rows)}\n"
             f"Kênh: {self.client.channel['snippet']['title']}\nChannel ID: {self.client.channel['id']}\n"
             f'Playlist: {self.playlist_title}\nPlaylist ID: {self.client.playlist_id}\n'
             f'Audience: {audience}\nVisibility: {privacy.upper()}\nKhông đặt lịch công khai.\n\n'
-            'Bạn đồng ý upload duy nhất video này?', parent=self):
+            'Tải tuần tự; khi mở lại app, hàng đợi sẽ tiếp tục. Đồng ý bắt đầu?', parent=self):
             return
         self.progress['value'] = 0
         self.video_url = ''
-        self.result.set('Đang xử lý video đã được bạn xác nhận…')
-        self.run_task(lambda: self.client.upload(row, privacy, kids,
-            lambda value, text: self.events.put(('progress', value, text))), self.upload_finished)
+        count = self.upload_queue.add(rows, self.client.channel['id'], self.client.playlist_id, privacy, kids)
+        self.settings.data['queue_paused'] = False
+        self.settings.save()
+        self.result.set(f'Đã thêm {count} video vào hàng đợi. Xem tiến trình trong Hàng đợi.')
+        self.refresh_queue()
+        self.kick_queue()
+
+    def kick_queue(self):
+        self.after_cancel(self.queue_timer)
+        self.queue_timer = self.after(100, self.queue_tick)
+
+    def queue_tick(self):
+        if not self.busy and not self.settings.data.get('queue_paused', False):
+            item = self.upload_queue.next()
+            if item and self.client.channel_confirmed and self.client.playlist_id:
+                if self.client.channel['id'] != item['channel_id'] or self.client.playlist_id != item['playlist_id']:
+                    self.info.set('Hàng đợi thuộc kênh hoặc playlist khác; kết nối đúng để tiếp tục.')
+                else:
+                    row = json.loads(item['row_json'])
+                    self.result.set(f"Đang tải: {row['title']}")
+                    self.run_task(lambda: self.upload_queue.process(item, self.client,
+                        lambda value, text: self.events.put(('progress', value, text))), self.queue_finished, silent=True)
+                    self.after(250, self.refresh_queue)
+        self.queue_timer = self.after(5000, self.queue_tick)
+
+    def queue_finished(self, row):
+        if row:
+            self.upload_finished(row)
+        else:
+            self.info.set('Một mục đang chờ hoặc cần kiểm tra. Mở Hàng đợi để xem chi tiết.')
+        self.refresh_queue()
+        self.kick_queue()
+
+    def show_queue(self):
+        if getattr(self, 'queue_window', None) and self.queue_window.winfo_exists():
+            self.queue_window.lift()
+            self.refresh_queue()
+            return
+        self.queue_window = tk.Toplevel(self)
+        self.queue_window.title('Hàng đợi upload')
+        self.queue_window.geometry('1040x420')
+        frame = ttk.Frame(self.queue_window, padding=12)
+        frame.pack(fill='both', expand=True)
+        ttk.Label(frame, text='Tải tuần tự khi app đang mở. Mục bị gián đoạn cần kiểm tra Lịch sử / YouTube Studio.').pack(anchor='w')
+        self.queue_table = ttk.Treeview(frame, columns=('title','state','retry','error'), show='headings', selectmode='extended')
+        for key, label, width in [('title','Video',300), ('state','Trạng thái',130), ('retry','Thử lại sau (giờ máy)',180), ('error','Chi tiết',400)]:
+            self.queue_table.heading(key, text=label)
+            self.queue_table.column(key, width=width)
+        self.queue_table.pack(fill='both', expand=True, pady=8)
+        bar = ttk.Frame(frame)
+        bar.pack(fill='x')
+        ttk.Button(bar, text='Tạm dừng / tiếp tục', command=self.toggle_queue).pack(side='left')
+        ttk.Button(bar, text='Xóa mục đã chọn khỏi hàng đợi', command=self.remove_queue).pack(side='left', padx=8)
+        self.queue_status = tk.StringVar()
+        ttk.Label(bar, textvariable=self.queue_status).pack(side='left')
+        self.refresh_queue()
+
+    def refresh_queue(self):
+        if not getattr(self, 'queue_window', None) or not self.queue_window.winfo_exists():
+            return
+        from datetime import datetime
+        self.queue_table.delete(*self.queue_table.get_children())
+        labels = {'pending':'Chờ tải', 'running':'Đang tải', 'waiting':'Chờ hạn mức', 'done':'Hoàn tất', 'attention':'Cần kiểm tra', 'interrupted':'Bị gián đoạn'}
+        for item in self.upload_queue.all():
+            retry = datetime.fromisoformat(item['retry_at']).astimezone().strftime('%d/%m/%Y %H:%M') if item['retry_at'] else ''
+            self.queue_table.insert('', 'end', iid=str(item['id']), values=(json.loads(item['row_json'])['title'], labels.get(item['state'], item['state']), retry, item['error']))
+        self.queue_status.set('Đã tạm dừng' if self.settings.data.get('queue_paused') else 'Đang hoạt động')
+
+    def toggle_queue(self):
+        self.settings.data['queue_paused'] = not self.settings.data.get('queue_paused', False)
+        self.settings.save()
+        self.refresh_queue()
+        self.kick_queue()
+
+    def remove_queue(self):
+        for item in self.queue_table.selection():
+            self.upload_queue.remove(int(item))
+        self.refresh_queue()
 
     def upload_finished(self, row):
         self.video_url = f"https://www.youtube.com/watch?v={row['video_id']}"

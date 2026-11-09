@@ -171,6 +171,11 @@ class History:
             db.execute(f'UPDATE uploads SET {fields},updated=CURRENT_TIMESTAMP WHERE id=?',
                        (*values.values(), record_id))
 
+    def release_rejected(self, record_id):
+        # Only used for a definitive quota rejection before any chunk succeeded.
+        with self.connection() as db:
+            db.execute("DELETE FROM uploads WHERE id=? AND state='Uploading' AND video_id=''", (record_id,))
+
     def recent(self, channel=None):
         with self.connection() as db:
             if channel:

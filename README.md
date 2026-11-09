@@ -1,18 +1,22 @@
-# YouTube Auto Uploader — v0.3
+# YouTube Auto Uploader — v0.4
 
-Ứng dụng Windows để quét video, đọc metadata CSV và upload **từng video** lên kênh **kênh YouTube của bạn**. Mặc định: **Unlisted**, **Not made for kids**, playlist **playlist đã cấu hình**. Không tự đặt lịch Public và không upload hàng loạt.
+Ứng dụng Windows để quét video, đọc metadata CSV và upload nhiều video tuần tự lên kênh YouTube của bạn. Mặc định: **Unlisted**, **Not made for kids**, playlist đã cấu hình. Không tự đặt lịch Public.
 
 ## Bắt đầu nhanh — không cần cài Python
 
 1. Mở [Releases](https://github.com/quoctran-2608/youtube-auto-uploader/releases/latest).
-2. Tải **youtube-auto-uploader-v0.3-windows-x64.zip** trong phần Assets. Đây là gói Windows có `.exe`; nút **Code → Download ZIP** chỉ tải mã nguồn.
+2. Tải **youtube-auto-uploader-v0.4-windows-x64.zip** trong phần Assets. Đây là gói Windows có `.exe`; nút **Code → Download ZIP** chỉ tải mã nguồn.
 3. Giải nén toàn bộ vào thư mục local, ví dụ `D:\YouTubeAutoUploader`. Không chạy ngay trong ZIP, không tách `.exe` khỏi thư mục `_internal`.
 4. Mở **YouTubeAutoUploader.exe**. Lần đầu, chủ kênh phải thiết lập OAuth trên máy này theo [SHARING.md](SHARING.md).
 5. Lần đầu mở **Cài đặt**: nhập email/tên playlist, nhập OAuth JSON rồi kết nối YouTube và xác nhận đúng kênh một lần.
 6. Từ lần sau: app tự kết nối bằng token lưu sẵn, làm mới token nếu còn dùng được, kiểm tra đúng kênh/playlist và tự quét thư mục lần trước. Không cần bấm Connect, xác nhận lại kênh hay chọn lại playlist. Nếu phải chọn giữa playlist trùng tên, app ghi nhớ ID đã chọn.
-7. Chọn thư mục video đã tải offline → **Quét video** → chọn một video.
-8. Kiểm tra metadata, Audience và Visibility → **Upload video đã chọn…** → đọc hộp xác nhận rồi đồng ý.
-9. App hiển thị tiến độ, lưu Video ID, thêm playlist và kiểm tra trạng thái. Dùng **Mở video vừa upload** để xem; YouTube có thể cần thêm thời gian xử lý nội dung.
+7. Chọn thư mục video đã tải offline. Giữ **Ctrl** hoặc **Shift** để chọn nhiều video, hoặc bấm **Chọn tất cả**.
+8. Kiểm tra Audience và Visibility áp dụng cho các video được chọn → **Thêm video vào hàng đợi…** → xác nhận một lần.
+9. App tải tuần tự. Mở **Hàng đợi** để xem từng mục, tạm dừng sau video hiện tại, tiếp tục hoặc xóa mục. Để app mở và máy không ngủ trong khi tải; nếu đóng app, mở lại để tự tiếp tục. Đợi video hiện tại kết thúc trước khi đóng.
+
+Hàng đợi lưu trên máy, gắn với đúng kênh, playlist, quyền riêng tư và đối tượng lúc xác nhận. Tệp phải vẫn ở nguyên đường dẫn và sẵn sàng offline. Khi gặp quota API, app chờ đến sau nửa đêm giờ Thái Bình Dương; giới hạn riêng của kênh không công bố giờ reset nên app chờ 24 giờ rồi thử lại, có thể phải chờ lâu hơn. Hàng đợi chỉ chạy khi app mở, có mạng, token còn hiệu lực và máy không ngủ; không tự chạy nền khi app đã đóng. Mục gián đoạn hoặc có kết quả không chắc chắn cần kiểm tra trong **Lịch sử** và YouTube Studio; app không tự tải lại mục đó. Mục khác vẫn tiếp tục.
+
+Theo [Google](https://developers.google.com/youtube/v3/determine_quota_cost), quota mặc định hiện là 100 lệnh `videos.insert` mỗi ngày cho dự án, dùng chung với ứng dụng khác cùng dự án; giới hạn thực tế có thể khác. YouTube cũng áp dụng [giới hạn upload riêng cho từng kênh](https://developers.google.com/youtube/data/reference/rest/v3/errors), không có một con số chung được đảm bảo. App dựa vào lỗi thực tế thay vì dự đoán số còn lại.
 
 **Muốn gửi cho bạn bè?** Gửi link Release hoặc gói Windows ZIP sạch. Đọc [hướng dẫn chia sẻ cùng kênh](SHARING.md): lời mời Editor/Manager trong Studio chưa dùng được với YouTube API. Không gửi mật khẩu, OTP, token hoặc thư mục AppData.
 
@@ -84,11 +88,11 @@ Upload theo chunk 8 MiB bằng resumable upload, xử lý `308 Resume Incomplete
 
 **Chống trùng chỉ dựa vào lịch sử local trên máy đó.** Hai máy không chia sẻ database nên có thể upload cùng tệp. Khi nhiều người cùng làm, phân công người/tệp rõ ràng và kiểm tra Studio trước; app chưa có hàng đợi dùng chung.
 
-## Nâng cấp từ v0.2
+## Nâng cấp từ v0.2 hoặc v0.3
 
-Tải bản Windows v0.3 và giải nén toàn bộ vào thư mục mới, mở `.exe` mới. Không cần chép token hoặc nhập lại credentials: app tiếp tục dùng dữ liệu ở `%LOCALAPPDATA%\YouTubeAutoUploader`. Lần đầu chuyển từ v0.2 có thể cần xác nhận kênh một lần để lưu chế độ ghi nhớ mới; các lần sau hoàn toàn tự khôi phục. Dữ liệu cá nhân chỉ nằm local, không nhúng vào gói phát hành.
+Tải bản Windows v0.4 và giải nén toàn bộ vào thư mục mới, mở `.exe` mới. Không cần chép token hoặc nhập lại credentials: app tiếp tục dùng dữ liệu ở `%LOCALAPPDATA%\YouTubeAutoUploader`. Lần đầu chuyển từ v0.2 có thể cần xác nhận kênh một lần để lưu chế độ ghi nhớ mới; các lần sau hoàn toàn tự khôi phục. Dữ liệu cá nhân chỉ nằm local, không nhúng vào gói phát hành.
 
-Nút Upload vẫn có hộp xác nhận cho video cụ thể, nhằm tránh gửi nhầm tệp. Cài đặt kết nối không lặp lại khi token/kênh/playlist vẫn hợp lệ. Mất mạng hoặc thư mục bị di chuyển sẽ hiển thị thông báo trên giao diện để bạn xử lý; không tự upload.
+Hộp xác nhận áp dụng cho toàn bộ nhóm video đã chọn. Cài đặt kết nối không lặp lại khi token/kênh/playlist vẫn hợp lệ.
 
 ## Dữ liệu riêng nằm ở đâu?
 
@@ -110,7 +114,7 @@ Không gửi thư mục này cho người khác; token DPAPI không dùng đư�
 .\.venv\Scripts\python.exe package_app.py
 ```
 
-- `build_windows.py`: gói Windows tại `dist/youtube-auto-uploader-v0.3-windows-x64.zip`, không kèm credentials/token/lịch sử/video.
+- `build_windows.py`: gói Windows tại `dist/youtube-auto-uploader-v0.4-windows-x64.zip`, không kèm credentials/token/lịch sử/video.
 - `package_app.py`: ZIP mã nguồn theo danh sách cho phép; báo cáo thiết lập cá nhân `SETUP_STATUS.md` không được publish.
 - `YouTubeAutoUploader.exe --self-check output.json`: kiểm tra offline runtime, Tkinter, SDK, DPAPI, SQLite và transport 308; không đăng nhập hoặc upload video.
 
