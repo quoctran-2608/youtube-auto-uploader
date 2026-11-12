@@ -89,6 +89,60 @@ class StartupTests(unittest.TestCase):
                 app.lock.close()
                 app.destroy()
 
+    def test_scan_always_includes_subfolders_despite_old_config(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            (folder / 'nested').mkdir()
+            (folder / 'nested' / 'video.mp4').write_bytes(b'video')
+            with patch('app.local_directory', return_value=folder), patch.object(UploaderApp, 'startup'):
+                app = UploaderApp()
+            try:
+                app.folder.set(temp)
+                with patch('app.read_config', return_value={'scan_subfolders': False, 'daily_times': ['08:00']}):
+                    app.scan()
+                    self.pump(app, lambda: len(app.rows) == 1 and not app.busy)
+                self.assertEqual(app.rows[0]['filename'], 'nested/video.mp4')
+                self.assertEqual(app.table.item(app.table.get_children()[0])['values'][0], 1)
+            finally:
+                for identifier in app.tk.call('after', 'info'):
+                    app.after_cancel(identifier)
+                app.lock.close()
+                app.destroy()
+
+    def test_status_and_estimate_show_wait_and_known_progress(self):
+        from datetime import datetime, timedelta, timezone
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            with patch('app.local_directory', return_value=folder), patch.object(UploaderApp, 'startup'):
+                app = UploaderApp()
+            try:
+                app.client.channel = {'id': 'demo', 'snippet': {'title': 'Channel'}}
+                app.client.channel_confirmed = True
+                app.client.playlist_id = 'playlist'
+                row = {'path': str(folder / 'clip.mp4'), 'filename': 'clip.mp4', 'title': 'Clip', 'size_mb': 100}
+                app.rows = [row]
+                item_id = app.table.insert('', 'end', values=(1, 'clip.mp4', 'Clip', 100, ''))
+                app.upload_queue.add([row], 'demo', 'playlist', 'unlisted', False)
+                app.refresh_statuses()
+                self.assertIn('Chờ tải', app.table.set(item_id, 'state'))
+                app.refresh_eta()
+                self.assertIn('chờ dữ liệu', app.eta.get())
+                queued = app.upload_queue.next()
+                app.upload_queue.update(queued['id'], state='waiting', retry_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
+                app.refresh_eta()
+                self.assertIn('Chờ hạn mức', app.eta.get())
+                app.upload_queue.update(queued['id'], state='done', retry_at='')
+                app.refresh_statuses()
+                self.assertIn('Đã tải', app.table.set(item_id, 'state'))
+                app.upload_queue.update(queued['id'], state='attention')
+                app.refresh_statuses()
+                self.assertIn('Cần kiểm tra', app.table.set(item_id, 'state'))
+            finally:
+                for identifier in app.tk.call('after', 'info'):
+                    app.after_cancel(identifier)
+                app.lock.close()
+                app.destroy()
+
     def test_startup_offline_and_missing_folder_do_not_loop_or_prompt(self):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)

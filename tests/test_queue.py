@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from storage import History
-from upload_queue import UploadQueue, pacific_midnight_after
+from upload_queue import UploadQueue, pacific_midnight_after, estimate_remaining
 from youtube_client import QuotaWait
 
 UTC = timezone.utc
@@ -63,3 +63,12 @@ class QueueTests(unittest.TestCase):
         for source, target in cases:
             expected = datetime(*target, 5, tzinfo=UTC)
             self.assertEqual(pacific_midnight_after(datetime(*source, tzinfo=UTC)), expected)
+
+    def test_remaining_time_uses_queue_bytes_and_current_progress(self):
+        items = [dict(id=1, state='running', row_json=json.dumps({'size_mb': 100})),
+                 dict(id=2, state='pending', row_json=json.dumps({'size_mb': 50})),
+                 dict(id=3, state='done', row_json=json.dumps({'size_mb': 900}))]
+        self.assertEqual(estimate_remaining(items, 1, .5, 1024 * 1024), 100)
+        self.assertIsNone(estimate_remaining(items, 1, .5, None))
+        items[1]['row_json'] = json.dumps({'size_mb': 0})
+        self.assertIsNone(estimate_remaining(items, 1, .5, 1024 * 1024))

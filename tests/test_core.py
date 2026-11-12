@@ -20,5 +20,15 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(rows[0]['title'], 'Tiêu đề riêng')
             self.assertEqual(rows[0]['publish_at'], '2026-11-13 09:00')
 
+    def test_scan_includes_nested_folders_and_distinguishes_same_names(self):
+        with tempfile.TemporaryDirectory() as root:
+            p = Path(root)
+            (p / 'a' / 'nested').mkdir(parents=True)
+            (p / 'b').mkdir()
+            (p / 'a' / 'nested' / 'clip.mp4').write_bytes(b'1')
+            (p / 'b' / 'clip.mp4').write_bytes(b'2')
+            rows = preview(p, dict(DEFAULT_CONFIG), {})
+            self.assertEqual([row['filename'] for row in rows], ['a/nested/clip.mp4', 'b/clip.mp4'])
+
 if __name__ == '__main__':
     unittest.main()

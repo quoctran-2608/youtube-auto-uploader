@@ -7,6 +7,31 @@ from youtube_client import QuotaWait, quota_reason, friendly_error
 
 UTC = timezone.utc
 
+STATUS = {
+    'pending': ('● Chờ tải', 'waiting'),
+    'running': ('● Đang tải', 'waiting'),
+    'waiting': ('● Chờ hạn mức', 'waiting'),
+    'done': ('✓ Đã tải', 'done'),
+    'attention': ('✕ Cần kiểm tra', 'error'),
+    'interrupted': ('✕ Bị gián đoạn', 'error'),
+}
+
+
+def estimate_remaining(items, current_id=None, fraction=0.0, bytes_per_second=None):
+    """Estimate active transfer time; None means insufficient reliable data."""
+    if not bytes_per_second or bytes_per_second <= 0:
+        return None
+    total = 0
+    for item in items:
+        if item['state'] not in ('pending', 'running', 'waiting'):
+            continue
+        size = json.loads(item['row_json']).get('size_mb')
+        if size is None or size <= 0:
+            return None
+        remaining = 1 - max(0, min(float(fraction), 1)) if item['id'] == current_id else 1
+        total += size * 1024 * 1024 * remaining
+    return total / bytes_per_second
+
 
 def pacific_midnight_after(now):
     """Next midnight in Los Angeles, including US daylight-saving transitions."""

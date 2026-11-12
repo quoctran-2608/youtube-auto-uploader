@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 import json
+import time
 import queue
 import threading
 import webbrowser
@@ -13,7 +14,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from core import preview, read_config, read_metadata, save_preview
 from storage import History, InstanceLock, SecretStore, Settings, local_directory
 from youtube_client import YouTubeClient, friendly_error
-from upload_queue import UploadQueue
+from upload_queue import UploadQueue, STATUS, estimate_remaining
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 
@@ -119,9 +120,13 @@ class UploaderApp(PreviewApp):
         self.events = queue.Queue()
         self.actions = []
         self.video_url = ''
+        self.current_item = None
+        self.current_started = None
+        self.current_fraction = 0.0
+        self.transfer_samples = []
         super().__init__()
         self.folder.set(self.settings.data.get('last_folder', ''))
-        self.title('YouTube Auto Uploader · v0.4')
+        self.title('YouTube Auto Uploader · v0.5')
         self.geometry('1040x700')
         self.minsize(880, 620)
         self.protocol('WM_DELETE_WINDOW', self.close)
@@ -170,15 +175,17 @@ class UploaderApp(PreviewApp):
         self.count.pack(anchor='w', pady=(0, 5))
         frame = ttk.Frame(container)
         frame.pack(fill='both', expand=True)
-        columns = ('filename', 'title', 'size_mb', 'publish_at')
-        self.table = ttk.Treeview(frame, columns=columns, displaycolumns=('filename', 'title', 'size_mb'), show='headings', selectmode='extended', height=8)
-        for key, title, width in [('filename', 'Tệp video', 340), ('title', 'Tiêu đề', 440), ('size_mb', 'MB', 75)]:
+        columns = ('number', 'filename', 'title', 'size_mb', 'state')
+        self.table = ttk.Treeview(frame, columns=columns, show='headings', selectmode='extended', height=8)
+        for key, title, width in [('number', 'STT', 55), ('filename', 'Tệp video', 275), ('title', 'Tiêu đề', 300), ('size_mb', 'MB', 65), ('state', 'Trạng thái', 160)]:
             self.table.heading(key, text=title)
             self.table.column(key, width=width, minwidth=60, stretch=key != 'size_mb')
         scrollbar = ttk.Scrollbar(frame, orient='vertical', command=self.table.yview)
         self.table.configure(yscrollcommand=scrollbar.set)
         self.table.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
+        for tag, color in [('waiting', '#9a6700'), ('done', '#18733e'), ('error', '#b42318')]:
+            self.table.tag_configure(tag, foreground=color)
         self.details = tk.StringVar(value='Giữ Ctrl hoặc Shift để chọn nhiều video; Ctrl+A chọn tất cả.')
         ttk.Label(container, textvariable=self.details, wraplength=960).pack(anchor='w', pady=(10, 6))
         options = ttk.Frame(container)
@@ -200,6 +207,8 @@ class UploaderApp(PreviewApp):
         self.progress.pack(side='left', fill='x', expand=True, padx=(8, 0))
         self.result = tk.StringVar(value='')
         ttk.Label(container, textvariable=self.result, wraplength=960).pack(anchor='w', pady=(7, 0))
+        self.eta = tk.StringVar(value='Dự kiến hoàn thành: chưa có hàng đợi.')
+        ttk.Label(container, textvariable=self.eta, wraplength=960, foreground='#285b8d').pack(anchor='w', pady=(5, 0))
         ttk.Label(container, textvariable=self.info, wraplength=960, foreground='#576779').pack(anchor='w', pady=(5, 0))
         self.table.bind('<<TreeviewSelect>>', self.selection_changed)
         self.table.bind('<Control-a>', lambda event: self.table.selection_set(self.table.get_children()))
@@ -281,6 +290,9 @@ class UploaderApp(PreviewApp):
                 if event[0] == 'progress':
                     self.progress['value'] = event[1]
                     self.info.set(event[2])
+                    if self.current_item and event[2].startswith('Đang upload'):
+                        self.current_fraction = min(max(event[1] / 100, 0), 1)
+                        self.refresh_eta()
                     continue
                 self.busy = False
                 for button in self.actions:
@@ -449,14 +461,16 @@ class UploaderApp(PreviewApp):
         self.table.delete(*self.table.get_children())
         def work():
             config = read_config(ROOT / 'config.json')
+            config['scan_subfolders'] = True
             path = Path(config.get('metadata_csv', 'metadata.csv'))
             return preview(folder, config, read_metadata(path if path.is_absolute() else ROOT / path))
         def done(rows):
             self.rows = rows
             self.table.delete(*self.table.get_children())
-            for row in rows:
-                self.table.insert('', 'end', values=(row['filename'], row['title'], row['size_mb'], row['publish_at']))
+            for index, row in enumerate(rows, 1):
+                self.table.insert('', 'end', values=(index, row['filename'], row['title'], row['size_mb'], ''))
             self.count.configure(text=f'{len(rows)} video')
+            self.refresh_statuses()
             self.info.set(f'Đã quét {len(rows)} video. Chọn một video để upload.' if self.client.channel_confirmed and self.client.playlist_id else 'Đã quét thư mục. Hoàn tất kết nối trong Cài đặt để upload.')
         self.run_task(work, done, silent=True)
 
@@ -495,12 +509,70 @@ class UploaderApp(PreviewApp):
         self.settings.data['queue_paused'] = False
         self.settings.save()
         self.result.set(f'Đã thêm {count} video vào hàng đợi. Xem tiến trình trong Hàng đợi.')
+        self.refresh_statuses()
         self.refresh_queue()
         self.kick_queue()
 
     def kick_queue(self):
         self.after_cancel(self.queue_timer)
         self.queue_timer = self.after(100, self.queue_tick)
+
+    def refresh_statuses(self):
+        if not hasattr(self, 'table'):
+            return
+        channel = self.client.channel['id'] if self.client.channel else None
+        states = {}
+        if channel:
+            for record in reversed(self.history.recent(channel)):
+                label = ('✓ Đã tải (lịch sử)', 'done') if record['state'] == 'Uploaded' and record['verified'] else ('✕ Cần kiểm tra', 'error')
+                states[record['path']] = label
+            for item in self.upload_queue.all():
+                if item['channel_id'] == channel:
+                    states[json.loads(item['row_json'])['path']] = STATUS.get(item['state'], ('', ''))
+        for index, tree_id in enumerate(self.table.get_children()):
+            if index >= len(self.rows):
+                break
+            label, tag = states.get(self.rows[index]['path'], ('— Chưa thêm', ''))
+            self.table.set(tree_id, 'state', label)
+            self.table.item(tree_id, tags=(tag,))
+
+    def refresh_eta(self):
+        from datetime import datetime, timedelta, timezone
+        items = self.upload_queue.all()
+        active = [item for item in items if item['state'] in ('pending', 'running', 'waiting')]
+        if not active:
+            attention = any(item['state'] in ('attention', 'interrupted') for item in items)
+            text = 'Hàng đợi đã hết mục chờ.' + (' Có mục cần kiểm tra.' if attention else '') if items else 'Chưa có hàng đợi.'
+        elif self.settings.data.get('queue_paused'):
+            text = 'Đã tạm dừng; chưa thể ước tính giờ hoàn thành.'
+        elif not self.client.channel_confirmed or not self.client.playlist_id:
+            text = 'Chưa kết nối; chưa thể ước tính giờ hoàn thành.'
+        elif any(item['channel_id'] != self.client.channel['id'] or item['playlist_id'] != self.client.playlist_id for item in active):
+            text = 'Có video thuộc kênh hoặc playlist khác; chưa thể ước tính.'
+        elif active[0]['state'] == 'waiting' and active[0]['retry_at'] and datetime.fromisoformat(active[0]['retry_at']) > datetime.now(timezone.utc):
+            retry = datetime.fromisoformat(active[0]['retry_at']).astimezone().strftime('%d/%m %H:%M')
+            text = f'Chờ hạn mức; thử lại sau {retry}. Chưa thể dự đoán giờ hoàn thành.'
+        else:
+            bytes_done = sum(sample[0] for sample in self.transfer_samples)
+            seconds = sum(sample[1] for sample in self.transfer_samples)
+            if self.current_item and self.current_started and self.current_fraction > 0:
+                elapsed = time.monotonic() - self.current_started
+                size = json.loads(self.current_item['row_json']).get('size_mb', 0) * 1024 * 1024
+                if elapsed > 0 and size > 0:
+                    bytes_done += size * self.current_fraction
+                    seconds += elapsed
+            speed = bytes_done / seconds if seconds > 0 else None
+            remaining = estimate_remaining(active, self.current_item['id'] if self.current_item else None, self.current_fraction, speed)
+            if remaining is None:
+                text = 'Đang chờ dữ liệu tốc độ tải để ước tính.'
+            elif remaining < 1 and self.current_item:
+                text = 'Đang hoàn tất và xác minh video cuối.'
+            else:
+                finish = (datetime.now().astimezone() + timedelta(seconds=remaining)).strftime('%d/%m %H:%M')
+                minutes = max(1, round(remaining / 60))
+                text = f'Khoảng {minutes // 60} giờ {minutes % 60:02} phút nữa · khoảng {finish} (giờ máy).'
+        self.eta.set('Dự kiến hoàn thành: ' + text)
+
 
     def queue_tick(self):
         if not self.busy and not self.settings.data.get('queue_paused', False):
@@ -510,18 +582,33 @@ class UploaderApp(PreviewApp):
                     self.info.set('Hàng đợi thuộc kênh hoặc playlist khác; kết nối đúng để tiếp tục.')
                 else:
                     row = json.loads(item['row_json'])
+                    self.current_item = item
+                    self.current_started = time.monotonic()
+                    self.current_fraction = 0.0
                     self.result.set(f"Đang tải: {row['title']}")
                     self.run_task(lambda: self.upload_queue.process(item, self.client,
                         lambda value, text: self.events.put(('progress', value, text))), self.queue_finished, silent=True)
                     self.after(250, self.refresh_queue)
+        self.refresh_statuses()
+        self.refresh_eta()
         self.queue_timer = self.after(5000, self.queue_tick)
 
     def queue_finished(self, row):
+        if row and self.current_item and self.current_started and self.current_fraction > 0:
+            size = json.loads(self.current_item['row_json']).get('size_mb', 0) * 1024 * 1024
+            elapsed = time.monotonic() - self.current_started
+            if size > 0 and elapsed > 0:
+                self.transfer_samples = (self.transfer_samples + [(size, elapsed)])[-5:]
+        self.current_item = None
+        self.current_started = None
+        self.current_fraction = 0.0
         if row:
             self.upload_finished(row)
         else:
             self.info.set('Một mục đang chờ hoặc cần kiểm tra. Mở Hàng đợi để xem chi tiết.')
         self.refresh_queue()
+        self.refresh_statuses()
+        self.refresh_eta()
         self.kick_queue()
 
     def show_queue(self):
@@ -535,11 +622,14 @@ class UploaderApp(PreviewApp):
         frame = ttk.Frame(self.queue_window, padding=12)
         frame.pack(fill='both', expand=True)
         ttk.Label(frame, text='Tải tuần tự khi app đang mở. Mục bị gián đoạn cần kiểm tra Lịch sử / YouTube Studio.').pack(anchor='w')
-        self.queue_table = ttk.Treeview(frame, columns=('title','state','retry','error'), show='headings', selectmode='extended')
-        for key, label, width in [('title','Video',300), ('state','Trạng thái',130), ('retry','Thử lại sau (giờ máy)',180), ('error','Chi tiết',400)]:
+        self.queue_table = ttk.Treeview(frame, columns=('number','title','state','retry','error'), show='headings', selectmode='extended')
+        for key, label, width in [('number','STT',55), ('title','Video',300), ('state','Trạng thái',160), ('retry','Thử lại sau (giờ máy)',180), ('error','Chi tiết',400)]:
             self.queue_table.heading(key, text=label)
             self.queue_table.column(key, width=width)
         self.queue_table.pack(fill='both', expand=True, pady=8)
+        for tag, color in [('waiting', '#9a6700'), ('done', '#18733e'), ('error', '#b42318')]:
+            self.queue_table.tag_configure(tag, foreground=color)
+        ttk.Label(frame, textvariable=self.eta, foreground='#285b8d').pack(anchor='w', pady=(0, 6))
         bar = ttk.Frame(frame)
         bar.pack(fill='x')
         ttk.Button(bar, text='Tạm dừng / tiếp tục', command=self.toggle_queue).pack(side='left')
@@ -553,22 +643,25 @@ class UploaderApp(PreviewApp):
             return
         from datetime import datetime
         self.queue_table.delete(*self.queue_table.get_children())
-        labels = {'pending':'Chờ tải', 'running':'Đang tải', 'waiting':'Chờ hạn mức', 'done':'Hoàn tất', 'attention':'Cần kiểm tra', 'interrupted':'Bị gián đoạn'}
-        for item in self.upload_queue.all():
+        for index, item in enumerate(self.upload_queue.all(), 1):
             retry = datetime.fromisoformat(item['retry_at']).astimezone().strftime('%d/%m/%Y %H:%M') if item['retry_at'] else ''
-            self.queue_table.insert('', 'end', iid=str(item['id']), values=(json.loads(item['row_json'])['title'], labels.get(item['state'], item['state']), retry, item['error']))
+            label, tag = STATUS.get(item['state'], (item['state'], ''))
+            self.queue_table.insert('', 'end', iid=str(item['id']), values=(index, json.loads(item['row_json'])['title'], label, retry, item['error']), tags=(tag,))
         self.queue_status.set('Đã tạm dừng' if self.settings.data.get('queue_paused') else 'Đang hoạt động')
 
     def toggle_queue(self):
         self.settings.data['queue_paused'] = not self.settings.data.get('queue_paused', False)
         self.settings.save()
         self.refresh_queue()
+        self.refresh_eta()
         self.kick_queue()
 
     def remove_queue(self):
         for item in self.queue_table.selection():
             self.upload_queue.remove(int(item))
         self.refresh_queue()
+        self.refresh_statuses()
+        self.refresh_eta()
 
     def upload_finished(self, row):
         self.video_url = f"https://www.youtube.com/watch?v={row['video_id']}"

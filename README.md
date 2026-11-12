@@ -1,18 +1,22 @@
-# YouTube Auto Uploader — v0.4
+# YouTube Auto Uploader — v0.5
 
 Ứng dụng Windows để quét video, đọc metadata CSV và upload nhiều video tuần tự lên kênh YouTube của bạn. Mặc định: **Unlisted**, **Not made for kids**, playlist đã cấu hình. Không tự đặt lịch Public.
 
 ## Bắt đầu nhanh — không cần cài Python
 
 1. Mở [Releases](https://github.com/quoctran-2608/youtube-auto-uploader/releases/latest).
-2. Tải **youtube-auto-uploader-v0.4-windows-x64.zip** trong phần Assets. Đây là gói Windows có `.exe`; nút **Code → Download ZIP** chỉ tải mã nguồn.
+2. Tải **youtube-auto-uploader-v0.5-windows-x64.zip** trong phần Assets. Đây là gói Windows có `.exe`; nút **Code → Download ZIP** chỉ tải mã nguồn.
 3. Giải nén toàn bộ vào thư mục local, ví dụ `D:\YouTubeAutoUploader`. Không chạy ngay trong ZIP, không tách `.exe` khỏi thư mục `_internal`.
 4. Mở **YouTubeAutoUploader.exe**. Lần đầu, chủ kênh phải thiết lập OAuth trên máy này theo [SHARING.md](SHARING.md).
 5. Lần đầu mở **Cài đặt**: nhập email/tên playlist, nhập OAuth JSON rồi kết nối YouTube và xác nhận đúng kênh một lần.
 6. Từ lần sau: app tự kết nối bằng token lưu sẵn, làm mới token nếu còn dùng được, kiểm tra đúng kênh/playlist và tự quét thư mục lần trước. Không cần bấm Connect, xác nhận lại kênh hay chọn lại playlist. Nếu phải chọn giữa playlist trùng tên, app ghi nhớ ID đã chọn.
-7. Chọn thư mục video đã tải offline. Giữ **Ctrl** hoặc **Shift** để chọn nhiều video, hoặc bấm **Chọn tất cả**.
+7. Chọn thư mục video đã tải offline. App quét cả các thư mục con ở mọi cấp, hiển thị đường dẫn tương đối. Giữ **Ctrl** hoặc **Shift** để chọn nhiều video, hoặc bấm **Chọn tất cả**.
 8. Kiểm tra Audience và Visibility áp dụng cho các video được chọn → **Thêm video vào hàng đợi…** → xác nhận một lần.
 9. App tải tuần tự. Mở **Hàng đợi** để xem từng mục, tạm dừng sau video hiện tại, tiếp tục hoặc xóa mục. Để app mở và máy không ngủ trong khi tải; nếu đóng app, mở lại để tự tiếp tục. Đợi video hiện tại kết thúc trước khi đóng.
+
+Danh sách video và hàng đợi có cột **STT** và **Trạng thái**: dấu ✓ xanh là hoàn tất và đã xác minh; dấu ✕ đỏ là cần kiểm tra, có thể đã tải nhưng chưa xác minh xong; chấm vàng là đang tải hoặc đang chờ. Trạng thái theo lịch sử chỉ đối chiếu đường dẫn tại máy này, không chứng minh tệp chưa bị thay thế; app kiểm tra nội dung bằng SHA-256 trước khi tải để chặn trùng. Trạng thái không đồng bộ giữa các máy.
+
+Dòng **Dự kiến hoàn thành** ước tính từ dữ liệu tiến độ/tốc độ trong lần mở app hiện tại và tổng dung lượng còn lại. Sau khi có tiến độ tải, con số cập nhật theo tốc độ thực tế, bao gồm thời gian đã dùng để kiểm tra tệp hiện tại; tốc độ mạng, thời gian xử lý từng video và giới hạn YouTube có thể làm kết quả thay đổi đáng kể. Khi đang chờ hạn mức hoặc thiếu dữ liệu tốc độ, app không đưa ra giờ hoàn thành. Đây là thời gian tải và xác minh hàng đợi, không phải thời gian YouTube xử lý xong video.
 
 Hàng đợi lưu trên máy, gắn với đúng kênh, playlist, quyền riêng tư và đối tượng lúc xác nhận. Tệp phải vẫn ở nguyên đường dẫn và sẵn sàng offline. Khi gặp quota API, app chờ đến sau nửa đêm giờ Thái Bình Dương; giới hạn riêng của kênh không công bố giờ reset nên app chờ 24 giờ rồi thử lại, có thể phải chờ lâu hơn. Hàng đợi chỉ chạy khi app mở, có mạng, token còn hiệu lực và máy không ngủ; không tự chạy nền khi app đã đóng. Mục gián đoạn hoặc có kết quả không chắc chắn cần kiểm tra trong **Lịch sử** và YouTube Studio; app không tự tải lại mục đó. Mục khác vẫn tiếp tục.
 
@@ -71,7 +75,7 @@ folder/clip-02.mp4,Tiêu đề khác,Mô tả khác,,
 
 Không có dòng CSV thì dùng tên tệp làm tiêu đề; mô tả mặc định trống. App không tạo metadata bằng AI. Dùng đường dẫn tương đối để phân biệt tệp trùng basename. Tiêu đề tối đa 100 ký tự.
 
-`config.json` giữ cấu hình quét của v0.1: `scan_subfolders`, `start_date`, `daily_times`, `timezone`, `metadata_csv`, `default_description`, `default_tags`. **Lịch trong bảng/CSV chỉ để tham khảo và không được gửi lên YouTube.**
+`config.json` giữ cấu hình xem trước: `start_date`, `daily_times`, `timezone`, `metadata_csv`, `default_description`, `default_tags`. App upload luôn quét thư mục con ngay cả khi `scan_subfolders` trong cấu hình cũ là false. **Lịch trong CSV chỉ để tham khảo và không được gửi lên YouTube.**
 
 ## Lỗi và chống upload trùng
 
@@ -88,9 +92,9 @@ Upload theo chunk 8 MiB bằng resumable upload, xử lý `308 Resume Incomplete
 
 **Chống trùng chỉ dựa vào lịch sử local trên máy đó.** Hai máy không chia sẻ database nên có thể upload cùng tệp. Khi nhiều người cùng làm, phân công người/tệp rõ ràng và kiểm tra Studio trước; app chưa có hàng đợi dùng chung.
 
-## Nâng cấp từ v0.2 hoặc v0.3
+## Nâng cấp từ bản trước
 
-Tải bản Windows v0.4 và giải nén toàn bộ vào thư mục mới, mở `.exe` mới. Không cần chép token hoặc nhập lại credentials: app tiếp tục dùng dữ liệu ở `%LOCALAPPDATA%\YouTubeAutoUploader`. Lần đầu chuyển từ v0.2 có thể cần xác nhận kênh một lần để lưu chế độ ghi nhớ mới; các lần sau hoàn toàn tự khôi phục. Dữ liệu cá nhân chỉ nằm local, không nhúng vào gói phát hành.
+Tải bản Windows v0.5 và giải nén toàn bộ vào thư mục mới, mở `.exe` mới. Không cần chép token hoặc nhập lại credentials: app tiếp tục dùng dữ liệu ở `%LOCALAPPDATA%\YouTubeAutoUploader`. Lần đầu chuyển từ v0.2 có thể cần xác nhận kênh một lần để lưu chế độ ghi nhớ mới; các lần sau hoàn toàn tự khôi phục. Dữ liệu cá nhân chỉ nằm local, không nhúng vào gói phát hành.
 
 Hộp xác nhận áp dụng cho toàn bộ nhóm video đã chọn. Cài đặt kết nối không lặp lại khi token/kênh/playlist vẫn hợp lệ.
 
@@ -114,7 +118,7 @@ Không gửi thư mục này cho người khác; token DPAPI không dùng đư�
 .\.venv\Scripts\python.exe package_app.py
 ```
 
-- `build_windows.py`: gói Windows tại `dist/youtube-auto-uploader-v0.4-windows-x64.zip`, không kèm credentials/token/lịch sử/video.
+- `build_windows.py`: gói Windows tại `dist/youtube-auto-uploader-v0.5-windows-x64.zip`, không kèm credentials/token/lịch sử/video.
 - `package_app.py`: ZIP mã nguồn theo danh sách cho phép; báo cáo thiết lập cá nhân `SETUP_STATUS.md` không được publish.
 - `YouTubeAutoUploader.exe --self-check output.json`: kiểm tra offline runtime, Tkinter, SDK, DPAPI, SQLite và transport 308; không đăng nhập hoặc upload video.
 
