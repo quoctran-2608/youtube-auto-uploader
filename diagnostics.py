@@ -2,6 +2,7 @@
 import shutil
 from pathlib import Path
 from storage import fingerprint
+from core import scan_files
 
 
 def error_advice(error, video_id=''):
@@ -65,3 +66,26 @@ def delete_uploaded_files(rows, history, channel):
         except Exception as error:
             failures.append(f'{path}: {error if isinstance(error, ValueError) else type(error).__name__}')
     return deleted, failures
+
+
+def find_uploaded_files(folder, history, channel, progress=lambda value, text: None):
+    """Find exact verified content within the chosen folder, without deleting."""
+    if not channel:
+        raise ValueError('Chưa xác định kênh. Hãy kết nối YouTube trước.')
+    folder = Path(folder).absolute()
+    resolved_folder = folder.resolve(strict=True)
+    files = scan_files(folder, recursive=True)
+    matches, failures = [], []
+    for index, path in enumerate(files, 1):
+        progress(0, f'Đang tìm clip đã tải: {index}/{len(files)} · {path.name}')
+        try:
+            if path.is_symlink() or not path.resolve().is_relative_to(resolved_folder):
+                continue
+            record = history.find(channel, fingerprint(path))
+            if record and record['state'] == 'Uploaded' and record['video_id'] and record['verified'] and not record['error']:
+                matches.append({'path': str(path), 'filename': path.relative_to(folder).as_posix(),
+                    'title': record['title'], 'size_mb': path.stat().st_size / (1024 * 1024),
+                    'description': '', 'tags': '', 'publish_at': ''})
+        except Exception as error:
+            failures.append(f'{path}: {type(error).__name__}')
+    return matches, len(files), failures

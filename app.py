@@ -15,7 +15,7 @@ from core import preview, read_config, read_metadata, save_preview
 from storage import History, InstanceLock, SecretStore, Settings, local_directory
 from youtube_client import YouTubeClient, friendly_error
 from upload_queue import UploadQueue, STATUS, estimate_remaining
-from diagnostics import error_advice, copy_for_inspection, delete_uploaded_files
+from diagnostics import error_advice, copy_for_inspection, delete_uploaded_files, find_uploaded_files
 from storage import fingerprint
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
@@ -129,7 +129,7 @@ class UploaderApp(PreviewApp):
         self.transfer_samples = []
         super().__init__()
         self.folder.set(self.settings.data.get('last_folder', ''))
-        self.title('YouTube Auto Uploader · v0.7')
+        self.title('YouTube Auto Uploader · v0.8')
         self.geometry('1040x700')
         self.minsize(880, 620)
         self.protocol('WM_DELETE_WINDOW', self.close)
@@ -202,7 +202,10 @@ class UploaderApp(PreviewApp):
         self.kids_check = ttk.Checkbutton(options, text='Dành cho trẻ em', variable=self.kids)
         self.kids_check.pack(side='left')
         self.action(options, 'Lưu mặc định', self.save_defaults, side='right')
-        self.delete_button = self.action(options, 'Xóa clip đã tải khỏi máy…', self.delete_selected, side='right', padx=8)
+        cleanup = ttk.Frame(container)
+        cleanup.pack(fill='x', pady=(6, 0))
+        self.action(cleanup, 'Tự tìm & xóa clip đã tải…', self.find_and_delete_uploaded, side='left')
+        self.delete_button = self.action(cleanup, 'Xóa clip đã chọn…', self.delete_selected, side='left', padx=8)
         footer = ttk.Frame(container)
         footer.pack(fill='x', pady=(12, 0))
         self.upload_button = self.action(footer, 'Thêm video vào hàng đợi…', self.upload_selected, side='left')
@@ -512,11 +515,36 @@ class UploaderApp(PreviewApp):
             messagebox.showinfo('Xóa clip trên máy', 'Chọn clip đã tải thành công (dấu tích xanh) trước.', parent=self)
             return
         channel = self.client.channel['id'] if self.client.channel else self.settings.data.get('channel_id', '')
+        self.confirm_delete_rows(rows, channel)
+
+    def find_and_delete_uploaded(self):
+        if self.busy:
+            return
+        folder = self.folder.get().strip()
+        if not folder:
+            messagebox.showinfo('Tìm clip đã tải', 'Chọn thư mục video cần dọn trước.', parent=self)
+            return
+        channel = self.client.channel['id'] if self.client.channel else self.settings.data.get('channel_id', '')
+        def found(result):
+            rows, scanned, failures = result
+            summary = f'Đã kiểm tra {scanned} clip trong thư mục và thư mục con; tìm thấy {len(rows)} clip đã tải thành công.'
+            self.info.set(summary)
+            if not rows:
+                self.text_dialog('Kết quả tìm clip đã tải', summary + ('\n\nKhông đọc được:\n' + '\n'.join(failures) if failures else ''))
+                return
+            summary += f"\nDung lượng có thể giải phóng: {sum(row['size_mb'] for row in rows):,.1f} MB."
+            if failures:
+                summary += f'\nCó {len(failures)} tệp không đọc được; các tệp này sẽ được bỏ qua.'
+            self.confirm_delete_rows(rows, channel, summary)
+        self.run_task(lambda: find_uploaded_files(folder, self.history, channel,
+            lambda value, text: self.events.put(('progress', value, text))), found)
+
+    def confirm_delete_rows(self, rows, channel, summary=''):
         file_list = '\n'.join(row['path'] for row in rows[:10])
         if len(rows) > 10:
             file_list += f'\n… và {len(rows) - 10} tệp khác trong lựa chọn.'
         if not messagebox.askyesno('Xác nhận xóa vĩnh viễn tệp trên máy',
-            f'Bạn sắp XÓA VĨNH VIỄN {len(rows)} tệp trên máy (không vào Thùng rác):\n\n{file_list}\n\n'
+            (summary + '\n\n' if summary else '') + f'Bạn sắp XÓA VĨNH VIỄN {len(rows)} tệp trên máy (không vào Thùng rác):\n\n{file_list}\n\n'
             'App sẽ kiểm tra nội dung khớp lịch sử tải thành công trước khi xóa. '
             'Video trên YouTube và lịch sử upload được giữ nguyên. Dòng clip vẫn hiện đến khi quét lại thư mục. '
             'Nếu tệp nằm trong thư mục đồng bộ, việc xóa có thể đồng bộ sang Drive/OneDrive.\n\nĐồng ý xóa?', parent=self):
@@ -524,6 +552,13 @@ class UploaderApp(PreviewApp):
         def done(result):
             deleted, failures = result
             self.deleted_local.update(deleted)
+            known_paths = {row['path'] for row in self.rows}
+            for row in rows:
+                if row['path'] in deleted and row['path'] not in known_paths:
+                    self.rows.append(row)
+                    known_paths.add(row['path'])
+                    self.table.insert('', 'end', values=(len(self.rows), row['filename'], row['title'], round(row['size_mb'], 2), 'Đã xoá trong máy'))
+            self.count.configure(text=f'{len(self.rows)} video')
             self.refresh_statuses()
             self.update_controls()
             self.info.set(f'Đã xóa {len(deleted)} tệp trên máy. Dòng clip được giữ đến khi quét lại thư mục.')

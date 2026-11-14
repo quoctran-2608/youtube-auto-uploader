@@ -1,5 +1,6 @@
 """Windows UI lifecycle tests with isolated local state and no Google access."""
 import os
+import gc
 import tempfile
 import time
 import unittest
@@ -12,6 +13,47 @@ from storage import Settings, fingerprint
 
 @unittest.skipUnless(os.name == 'nt', 'Windows desktop app')
 class StartupTests(unittest.TestCase):
+    def tearDown(self):
+        # Dispose Tk cycles on the UI thread before another test starts workers.
+        gc.collect()
+
+    def test_auto_find_deletes_successful_clips_without_selection_after_one_confirmation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            (folder / 'nested').mkdir()
+            uploaded = folder / 'nested' / 'uploaded.mp4'
+            untouched = folder / 'not-uploaded.mp4'
+            uploaded.write_bytes(b'uploaded')
+            untouched.write_bytes(b'pending')
+            with patch('app.local_directory', return_value=folder), patch.object(UploaderApp, 'startup'):
+                app = UploaderApp()
+            try:
+                app.client.channel = {'id': 'demo', 'snippet': {'title': 'Channel'}}
+                app.settings.data['queue_paused'] = True
+                app.folder.set(temp)
+                row = {'path': str(uploaded), 'title': 'Uploaded'}
+                record = app.history.claim('demo', fingerprint(uploaded), row, 'playlist', 'unlisted', False)
+                app.history.update(record, state='Uploaded', video_id='abcdefghijk', verified='yes')
+                self.assertFalse(app.table.selection())
+                with patch('app.messagebox.askyesno', return_value=False) as confirm:
+                    app.find_and_delete_uploaded()
+                    self.pump(app, lambda: not app.busy)
+                    confirm.assert_called_once()
+                self.assertTrue(uploaded.exists())
+                with patch('app.messagebox.askyesno', return_value=True) as confirm:
+                    app.find_and_delete_uploaded()
+                    self.pump(app, lambda: not app.busy)
+                    confirm.assert_called_once()
+                self.assertFalse(uploaded.exists())
+                self.assertTrue(untouched.exists())
+                self.assertEqual(app.table.set(app.table.get_children()[0], 'state'), 'Đã xoá trong máy')
+                self.assertEqual(app.history.get(record)['state'], 'Uploaded')
+            finally:
+                for identifier in app.tk.call('after', 'info'):
+                    app.after_cancel(identifier)
+                app.lock.close()
+                app.destroy()
+
     def test_delete_confirmation_keeps_row_until_rescan(self):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)

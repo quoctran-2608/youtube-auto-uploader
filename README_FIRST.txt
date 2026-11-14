@@ -1,4 +1,4 @@
-YOUTUBE AUTO UPLOADER v0.7 — WINDOWS
+YOUTUBE AUTO UPLOADER v0.8 — WINDOWS
 
 1. Giải nén TOÀN BỘ ZIP, mở YouTubeAutoUploader.exe, giữ nguyên _internal.
 2. Lần đầu mở Cài đặt: nhập email Google và tên playlist, nhập OAuth JSON,
@@ -21,7 +21,9 @@ Playlist Pending: Lịch sử > Retry playlist; không upload lại.
 Chuột phải vào clip > Xem lỗi để đọc lý do và hướng xử lý.
 Thử lại / hoàn tất: nếu đã có Video ID, chỉ hoàn tất playlist và xác minh.
 Chuột phải > Sao chép hoặc Gom tất cả clip đỏ để kiểm tra trong thư mục riêng.
-Chọn clip tích xanh > Xóa clip đã tải khỏi máy… > đọc cảnh báo và xác nhận.
+Không cần chọn clip: Tự tìm & xóa clip đã tải… > xem số clip/dung lượng > xác nhận.
+App tìm trong thư mục đang chọn và các thư mục con, chỉ nhận nội dung có lịch sử thành công.
+Hoặc chọn clip tích xanh > Xóa clip đã chọn… > đọc cảnh báo và xác nhận.
 Xóa vĩnh viễn, không vào Thùng rác. Dòng giữ trạng thái Đã xoá trong máy
 cho đến khi quét lại thư mục. Lịch sử và video trên YouTube được giữ nguyên.
 Lịch sử giữ nguyên khi đổi folder; kiểm tra SHA-256 nhận ra cả tệp đổi tên.
