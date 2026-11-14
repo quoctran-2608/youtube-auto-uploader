@@ -15,7 +15,7 @@ from core import preview, read_config, read_metadata, save_preview
 from storage import History, InstanceLock, SecretStore, Settings, local_directory
 from youtube_client import YouTubeClient, friendly_error
 from upload_queue import UploadQueue, STATUS, estimate_remaining
-from diagnostics import error_advice, copy_for_inspection
+from diagnostics import error_advice, copy_for_inspection, delete_uploaded_files
 from storage import fingerprint
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
@@ -122,13 +122,14 @@ class UploaderApp(PreviewApp):
         self.events = queue.Queue()
         self.actions = []
         self.video_url = ''
+        self.deleted_local = set()
         self.current_item = None
         self.current_started = None
         self.current_fraction = 0.0
         self.transfer_samples = []
         super().__init__()
         self.folder.set(self.settings.data.get('last_folder', ''))
-        self.title('YouTube Auto Uploader · v0.6')
+        self.title('YouTube Auto Uploader · v0.7')
         self.geometry('1040x700')
         self.minsize(880, 620)
         self.protocol('WM_DELETE_WINDOW', self.close)
@@ -188,6 +189,7 @@ class UploaderApp(PreviewApp):
         scrollbar.pack(side='right', fill='y')
         for tag, color in [('waiting', '#9a6700'), ('done', '#18733e'), ('error', '#b42318')]:
             self.table.tag_configure(tag, foreground=color)
+        self.table.tag_configure('deleted', foreground='#687383')
         self.details = tk.StringVar(value='Giữ Ctrl hoặc Shift để chọn nhiều video; Ctrl+A chọn tất cả.')
         ttk.Label(container, textvariable=self.details, wraplength=960).pack(anchor='w', pady=(10, 6))
         options = ttk.Frame(container)
@@ -200,6 +202,7 @@ class UploaderApp(PreviewApp):
         self.kids_check = ttk.Checkbutton(options, text='Dành cho trẻ em', variable=self.kids)
         self.kids_check.pack(side='left')
         self.action(options, 'Lưu mặc định', self.save_defaults, side='right')
+        self.delete_button = self.action(options, 'Xóa clip đã tải khỏi máy…', self.delete_selected, side='right', padx=8)
         footer = ttk.Frame(container)
         footer.pack(fill='x', pady=(12, 0))
         self.upload_button = self.action(footer, 'Thêm video vào hàng đợi…', self.upload_selected, side='left')
@@ -241,8 +244,11 @@ class UploaderApp(PreviewApp):
 
     def update_controls(self):
         if hasattr(self, 'upload_button'):
-            ready = self.client.channel_confirmed and bool(self.client.playlist_id) and not self.busy and bool(self.table.selection())
+            ready = self.client.channel_confirmed and bool(self.client.playlist_id) and not self.busy and bool(self.table.selection()) and all(row['path'] not in self.deleted_local for row in self.selected_rows())
             self.upload_button.configure(state='normal' if ready else 'disabled')
+        if hasattr(self, 'delete_button'):
+            eligible = not self.busy and any('done' in self.table.item(item, 'tags') for item in self.table.selection())
+            self.delete_button.configure(state='normal' if eligible else 'disabled')
 
     def startup(self):
         if self.settings.data.get('expected_email') and self.client.secrets.read('credentials') and self.client.secrets.read('token'):
@@ -449,6 +455,8 @@ class UploaderApp(PreviewApp):
                 error, video_id = self.clip_diagnostic(row)
                 if error:
                     self.details.set(f"{row['title']}\n{error[:220]} · Nhấp đúp hoặc chuột phải → Xem lỗi để đọc đầy đủ.")
+            if row['path'] in self.deleted_local:
+                self.details.set(f"{row['title']} · Đã xoá trong máy. Lịch sử upload được giữ; dòng này sẽ mất khi quét lại thư mục.")
         self.update_controls()
 
     def selected_rows(self):
@@ -476,6 +484,7 @@ class UploaderApp(PreviewApp):
         menu.add_separator()
         menu.add_command(label='Sao chép clip đã chọn sang thư mục…', command=self.copy_selected, state='disabled' if self.busy else 'normal')
         menu.add_command(label='Gom tất cả clip đỏ sang thư mục…', command=lambda: self.copy_selected(True), state='disabled' if self.busy else 'normal')
+        menu.add_command(label='Xóa clip đã tải khỏi máy…', command=self.delete_selected, state='disabled' if self.busy else 'normal')
         menu.add_separator()
         menu.add_command(label='Kiểm tra lịch sử bằng nội dung SHA-256', command=self.check_local_content, state='disabled' if self.busy else 'normal')
         menu.add_command(label='Tìm video cùng tiêu đề trên kênh', command=self.check_channel_title, state='disabled' if self.busy else 'normal')
@@ -493,6 +502,34 @@ class UploaderApp(PreviewApp):
         box.insert('1.0', text)
         box.configure(state='disabled')
         ttk.Button(dialog, text='Đóng', command=dialog.destroy).pack(pady=8)
+
+    def delete_selected(self):
+        if self.busy:
+            return
+        rows = [self.rows[self.table.index(item)] for item in self.table.selection()
+                if 'done' in self.table.item(item, 'tags') and self.rows[self.table.index(item)]['path'] not in self.deleted_local]
+        if not rows:
+            messagebox.showinfo('Xóa clip trên máy', 'Chọn clip đã tải thành công (dấu tích xanh) trước.', parent=self)
+            return
+        channel = self.client.channel['id'] if self.client.channel else self.settings.data.get('channel_id', '')
+        file_list = '\n'.join(row['path'] for row in rows[:10])
+        if len(rows) > 10:
+            file_list += f'\n… và {len(rows) - 10} tệp khác trong lựa chọn.'
+        if not messagebox.askyesno('Xác nhận xóa vĩnh viễn tệp trên máy',
+            f'Bạn sắp XÓA VĨNH VIỄN {len(rows)} tệp trên máy (không vào Thùng rác):\n\n{file_list}\n\n'
+            'App sẽ kiểm tra nội dung khớp lịch sử tải thành công trước khi xóa. '
+            'Video trên YouTube và lịch sử upload được giữ nguyên. Dòng clip vẫn hiện đến khi quét lại thư mục. '
+            'Nếu tệp nằm trong thư mục đồng bộ, việc xóa có thể đồng bộ sang Drive/OneDrive.\n\nĐồng ý xóa?', parent=self):
+            return
+        def done(result):
+            deleted, failures = result
+            self.deleted_local.update(deleted)
+            self.refresh_statuses()
+            self.update_controls()
+            self.info.set(f'Đã xóa {len(deleted)} tệp trên máy. Dòng clip được giữ đến khi quét lại thư mục.')
+            if failures:
+                self.text_dialog('Một số tệp chưa được xóa', '\n\n'.join(failures))
+        self.run_task(lambda: delete_uploaded_files(rows, self.history, channel), done)
 
     def show_clip_details(self):
         rows = self.selected_rows()
@@ -568,6 +605,7 @@ class UploaderApp(PreviewApp):
             return preview(folder, config, read_metadata(path if path.is_absolute() else ROOT / path))
         def done(rows):
             self.rows = rows
+            self.deleted_local.clear()
             self.table.delete(*self.table.get_children())
             for index, row in enumerate(rows, 1):
                 self.table.insert('', 'end', values=(index, row['filename'], row['title'], row['size_mb'], ''))
@@ -596,6 +634,9 @@ class UploaderApp(PreviewApp):
             messagebox.showinfo('Chọn video', 'Chọn đúng một video trong danh sách.', parent=self)
             return
         rows = [dict(self.rows[self.table.index(item)]) for item in sorted(selected, key=self.table.index)]
+        if any(row['path'] in self.deleted_local for row in rows):
+            messagebox.showinfo('Tệp đã xóa', 'Bỏ chọn các dòng Đã xoá trong máy hoặc quét lại thư mục.', parent=self)
+            return
         privacy, kids = self.privacy.get(), self.kids.get()
         audience = 'Made for kids' if kids else 'Not made for kids'
         if not messagebox.askyesno('Xác nhận hàng đợi upload',
@@ -636,6 +677,8 @@ class UploaderApp(PreviewApp):
             if index >= len(self.rows):
                 break
             label, tag = states.get(self.rows[index]['path'], ('— Chưa thêm', ''))
+            if self.rows[index]['path'] in self.deleted_local:
+                label, tag = 'Đã xoá trong máy', 'deleted'
             self.table.set(tree_id, 'state', label)
             self.table.item(tree_id, tags=(tag,))
 

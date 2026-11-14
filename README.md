@@ -1,11 +1,11 @@
-# YouTube Auto Uploader — v0.6
+# YouTube Auto Uploader — v0.7
 
 Ứng dụng Windows để quét video, đọc metadata CSV và upload nhiều video tuần tự lên kênh YouTube của bạn. Mặc định: **Unlisted**, **Not made for kids**, playlist đã cấu hình. Không tự đặt lịch Public.
 
 ## Bắt đầu nhanh — không cần cài Python
 
 1. Mở [Releases](https://github.com/quoctran-2608/youtube-auto-uploader/releases/latest).
-2. Tải **youtube-auto-uploader-v0.6-windows-x64.zip** trong phần Assets. Đây là gói Windows có `.exe`; nút **Code → Download ZIP** chỉ tải mã nguồn.
+2. Tải **youtube-auto-uploader-v0.7-windows-x64.zip** trong phần Assets. Đây là gói Windows có `.exe`; nút **Code → Download ZIP** chỉ tải mã nguồn.
 3. Giải nén toàn bộ vào thư mục local, ví dụ `D:\YouTubeAutoUploader`. Không chạy ngay trong ZIP, không tách `.exe` khỏi thư mục `_internal`.
 4. Mở **YouTubeAutoUploader.exe**. Lần đầu, chủ kênh phải thiết lập OAuth trên máy này theo [SHARING.md](SHARING.md).
 5. Lần đầu mở **Cài đặt**: nhập email/tên playlist, nhập OAuth JSON rồi kết nối YouTube và xác nhận đúng kênh một lần.
@@ -79,6 +79,10 @@ Không có dòng CSV thì dùng tên tệp làm tiêu đề; mô tả mặc đ�
 
 ## Lỗi và chống upload trùng
 
+**Xóa nhanh clip đã tải trên máy:** chọn một hoặc nhiều clip tích xanh → bấm **Xóa clip đã tải khỏi máy…** (hoặc chuột phải chọn cùng lệnh). Hộp cảnh báo liệt kê số tệp và yêu cầu xác nhận xóa vĩnh viễn, không vào Thùng rác. Trước khi xóa, app đọc SHA-256 để kiểm tra nội dung có bản ghi `Uploaded`, Video ID và xác minh đầy đủ trên kênh này; clip chưa đủ điều kiện hoặc đã bị thay thế sẽ không được xóa. Chỉ các clip tích xanh trong lựa chọn được đưa vào thao tác.
+
+Sau khi xóa thành công, dòng vẫn nằm trong danh sách chính với trạng thái màu xám **Đã xoá trong máy**; app không cho thêm dòng này vào hàng đợi. Bấm **Làm mới**, chọn lại thư mục hoặc mở lại app để quét thư mục thì tệp đã xóa không còn trong danh sách. Lịch sử và video YouTube không bị xóa. Xóa tệp trong thư mục Drive/OneDrive đồng bộ có thể đồng bộ thao tác xóa lên dịch vụ đó. Nếu có tệp bị khóa hoặc không đủ quyền, app báo tệp chưa được xóa.
+
 **Chuột phải vào clip** trong danh sách chính:
 
 - **Xem lỗi / hướng xử lý** (hoặc nhấp đúp): mở chi tiết lỗi đã lưu, Video ID nếu có và hướng xử lý. Chọn một clip cũng hiển thị tóm tắt lỗi dưới bảng. Ảnh chụp chỉ có chữ “Cần kiểm tra” không đủ xác định nguyên nhân; cần đọc chi tiết trên máy đã tải.
@@ -104,7 +108,7 @@ Upload theo chunk 8 MiB bằng resumable upload, xử lý `308 Resume Incomplete
 
 ## Nâng cấp từ bản trước
 
-Tải bản Windows v0.6 và giải nén toàn bộ vào thư mục mới, mở `.exe` mới. Không cần chép token hoặc nhập lại credentials: app tiếp tục dùng dữ liệu ở `%LOCALAPPDATA%\YouTubeAutoUploader`. Lần đầu chuyển từ v0.2 có thể cần xác nhận kênh một lần để lưu chế độ ghi nhớ mới; các lần sau hoàn toàn tự khôi phục. Dữ liệu cá nhân chỉ nằm local, không nhúng vào gói phát hành.
+Tải bản Windows v0.7 và giải nén toàn bộ vào thư mục mới, mở `.exe` mới. Không cần chép token hoặc nhập lại credentials: app tiếp tục dùng dữ liệu ở `%LOCALAPPDATA%\YouTubeAutoUploader`. Lần đầu chuyển từ v0.2 có thể cần xác nhận kênh một lần để lưu chế độ ghi nhớ mới; các lần sau hoàn toàn tự khôi phục. Dữ liệu cá nhân chỉ nằm local, không nhúng vào gói phát hành.
 
 Hộp xác nhận áp dụng cho toàn bộ nhóm video đã chọn. Cài đặt kết nối không lặp lại khi token/kênh/playlist vẫn hợp lệ.
 
@@ -128,7 +132,7 @@ Không gửi thư mục này cho người khác; token DPAPI không dùng đư�
 .\.venv\Scripts\python.exe package_app.py
 ```
 
-- `build_windows.py`: gói Windows tại `dist/youtube-auto-uploader-v0.6-windows-x64.zip`, không kèm credentials/token/lịch sử/video.
+- `build_windows.py`: gói Windows tại `dist/youtube-auto-uploader-v0.7-windows-x64.zip`, không kèm credentials/token/lịch sử/video.
 - `package_app.py`: ZIP mã nguồn theo danh sách cho phép; báo cáo thiết lập cá nhân `SETUP_STATUS.md` không được publish.
 - `YouTubeAutoUploader.exe --self-check output.json`: kiểm tra offline runtime, Tkinter, SDK, DPAPI, SQLite và transport 308; không đăng nhập hoặc upload video.
 

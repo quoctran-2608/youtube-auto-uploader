@@ -1,6 +1,7 @@
 """Local diagnostics and non-destructive copies for inspection."""
 import shutil
 from pathlib import Path
+from storage import fingerprint
 
 
 def error_advice(error, video_id=''):
@@ -42,3 +43,25 @@ def copy_for_inspection(rows, destination):
                 target.unlink(missing_ok=True)
             failures.append(f'{source}: {type(error).__name__}')
     return copied, failures
+
+
+def delete_uploaded_files(rows, history, channel):
+    """Delete only exact file contents with a verified successful local record."""
+    deleted, failures = [], []
+    for row in rows:
+        path = Path(row['path'])
+        try:
+            if not channel or path.is_symlink() or not path.is_file():
+                raise ValueError('Tệp không tồn tại, là liên kết hoặc chưa xác định kênh.')
+            before = path.stat()
+            record = history.find(channel, fingerprint(path))
+            if not record or record['state'] != 'Uploaded' or not record['video_id'] or not record['verified'] or record['error']:
+                raise ValueError('Nội dung tệp chưa có bản ghi tải thành công và xác minh đầy đủ trên kênh này.')
+            after = path.stat()
+            if (before.st_size, before.st_mtime_ns, before.st_ino) != (after.st_size, after.st_mtime_ns, after.st_ino):
+                raise ValueError('Tệp đã thay đổi trong lúc kiểm tra; chưa xóa.')
+            path.unlink()
+            deleted.append(str(path))
+        except Exception as error:
+            failures.append(f'{path}: {error if isinstance(error, ValueError) else type(error).__name__}')
+    return deleted, failures

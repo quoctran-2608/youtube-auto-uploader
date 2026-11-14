@@ -7,11 +7,50 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from app import UploaderApp
-from storage import Settings
+from storage import Settings, fingerprint
 
 
 @unittest.skipUnless(os.name == 'nt', 'Windows desktop app')
 class StartupTests(unittest.TestCase):
+    def test_delete_confirmation_keeps_row_until_rescan(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            path = folder / 'clip.mp4'
+            path.write_bytes(b'uploaded clip')
+            with patch('app.local_directory', return_value=folder), patch.object(UploaderApp, 'startup'):
+                app = UploaderApp()
+            try:
+                app.client.channel = {'id': 'demo', 'snippet': {'title': 'Channel'}}
+                app.settings.data['queue_paused'] = True
+                app.folder.set(temp)
+                app.scan()
+                self.pump(app, lambda: len(app.rows) == 1 and not app.busy)
+                record = app.history.claim('demo', fingerprint(path), app.rows[0], 'playlist', 'unlisted', False)
+                app.history.update(record, state='Uploaded', video_id='abcdefghijk', verified='yes')
+                app.refresh_statuses()
+                tree_id = app.table.get_children()[0]
+                app.table.selection_set(tree_id)
+                with patch('app.messagebox.askyesno', return_value=False):
+                    app.delete_selected()
+                self.assertTrue(path.exists())
+                with patch('app.messagebox.askyesno', return_value=True) as confirm:
+                    app.delete_selected()
+                    self.pump(app, lambda: not app.busy)
+                    confirm.assert_called_once()
+                self.assertFalse(path.exists())
+                self.assertEqual(len(app.table.get_children()), 1)
+                app.refresh_statuses()
+                self.assertEqual(app.table.set(tree_id, 'state'), 'Đã xoá trong máy')
+                self.assertEqual(app.history.get(record)['state'], 'Uploaded')
+                app.scan()
+                self.pump(app, lambda: not app.busy)
+                self.assertEqual(len(app.table.get_children()), 0)
+            finally:
+                for identifier in app.tk.call('after', 'info'):
+                    app.after_cancel(identifier)
+                app.lock.close()
+                app.destroy()
+
     def pump(self, app, condition):
         deadline = time.monotonic() + 4
         while not condition() and time.monotonic() < deadline:
