@@ -1,11 +1,11 @@
-# YouTube Auto Uploader — v0.5
+# YouTube Auto Uploader — v0.6
 
 Ứng dụng Windows để quét video, đọc metadata CSV và upload nhiều video tuần tự lên kênh YouTube của bạn. Mặc định: **Unlisted**, **Not made for kids**, playlist đã cấu hình. Không tự đặt lịch Public.
 
 ## Bắt đầu nhanh — không cần cài Python
 
 1. Mở [Releases](https://github.com/quoctran-2608/youtube-auto-uploader/releases/latest).
-2. Tải **youtube-auto-uploader-v0.5-windows-x64.zip** trong phần Assets. Đây là gói Windows có `.exe`; nút **Code → Download ZIP** chỉ tải mã nguồn.
+2. Tải **youtube-auto-uploader-v0.6-windows-x64.zip** trong phần Assets. Đây là gói Windows có `.exe`; nút **Code → Download ZIP** chỉ tải mã nguồn.
 3. Giải nén toàn bộ vào thư mục local, ví dụ `D:\YouTubeAutoUploader`. Không chạy ngay trong ZIP, không tách `.exe` khỏi thư mục `_internal`.
 4. Mở **YouTubeAutoUploader.exe**. Lần đầu, chủ kênh phải thiết lập OAuth trên máy này theo [SHARING.md](SHARING.md).
 5. Lần đầu mở **Cài đặt**: nhập email/tên playlist, nhập OAuth JSON rồi kết nối YouTube và xác nhận đúng kênh một lần.
@@ -79,6 +79,16 @@ Không có dòng CSV thì dùng tên tệp làm tiêu đề; mô tả mặc đ�
 
 ## Lỗi và chống upload trùng
 
+**Chuột phải vào clip** trong danh sách chính:
+
+- **Xem lỗi / hướng xử lý** (hoặc nhấp đúp): mở chi tiết lỗi đã lưu, Video ID nếu có và hướng xử lý. Chọn một clip cũng hiển thị tóm tắt lỗi dưới bảng. Ảnh chụp chỉ có chữ “Cần kiểm tra” không đủ xác định nguyên nhân; cần đọc chi tiết trên máy đã tải.
+- **Thử lại / hoàn tất**: thêm lại mục để kiểm tra SHA-256. Nếu đã có Video ID, app chỉ hoàn tất playlist và xác minh theo cấu hình của lần tải gốc. Nếu kết quả tải trước chưa rõ và chưa có ID, app vẫn chặn tải mới; mở Lịch sử, kiểm tra Studio rồi đối chiếu ID. Lỗi tệp/metadata trước khi bắt đầu upload có thể thử lại sau khi sửa và quét lại.
+- **Sao chép clip đã chọn** hoặc **Gom tất cả clip đỏ**: chọn thư mục đích. App giữ nguyên tệp gốc, tự thêm số khi trùng tên, báo tệp không sao chép được. “Tất cả” áp dụng cho danh sách thư mục đang quét. Bản sao vẫn có cùng SHA-256 nên không dùng để ép tải lại.
+- **Kiểm tra lịch sử bằng nội dung SHA-256**: đọc nội dung tệp rồi tìm trong toàn bộ lịch sử của kênh trên máy này, kể cả khi đã đổi thư mục hoặc tên tệp.
+- **Tìm video cùng tiêu đề trên kênh**: tra cứu clip đầu tiên đang chọn trong danh sách upload của kênh, hiển thị link các kết quả để tự đối chiếu. Tiêu đề khác vẫn có thể là cùng video; tiêu đề giống cũng có thể khác nội dung. App không tự gắn ID hay tự xác nhận trùng từ tên. Cách đọc danh sách upload dùng [channels.list](https://developers.google.com/youtube/v3/docs/channels/list) và [playlistItems.list](https://developers.google.com/youtube/v3/docs/playlistItems/list), phân trang đến hết và có thể cần thời gian/quota khi kênh nhiều video.
+
+**Lịch sử không bị xóa khi đổi thư mục.** Database nằm ở `%LOCALAPPDATA%\YouTubeAutoUploader\history.sqlite3`, độc lập với thư mục video và thư mục giải nén app. Nội dung giống hệt được nhận ra qua SHA-256, kể cả đổi tên hoặc chép sang chỗ khác. Tệp đã biên tập hoặc mã hóa lại sẽ có SHA-256 khác. Hai máy có lịch sử độc lập; app không có đối chiếu tự động toàn bộ nội dung video trên YouTube.
+
 | Trạng thái | Cách xử lý |
 | --- | --- |
 | `Uploaded` | API đã xác nhận video trong playlist; xem cột Audience/Visibility để biết xác minh riêng |
@@ -94,7 +104,7 @@ Upload theo chunk 8 MiB bằng resumable upload, xử lý `308 Resume Incomplete
 
 ## Nâng cấp từ bản trước
 
-Tải bản Windows v0.5 và giải nén toàn bộ vào thư mục mới, mở `.exe` mới. Không cần chép token hoặc nhập lại credentials: app tiếp tục dùng dữ liệu ở `%LOCALAPPDATA%\YouTubeAutoUploader`. Lần đầu chuyển từ v0.2 có thể cần xác nhận kênh một lần để lưu chế độ ghi nhớ mới; các lần sau hoàn toàn tự khôi phục. Dữ liệu cá nhân chỉ nằm local, không nhúng vào gói phát hành.
+Tải bản Windows v0.6 và giải nén toàn bộ vào thư mục mới, mở `.exe` mới. Không cần chép token hoặc nhập lại credentials: app tiếp tục dùng dữ liệu ở `%LOCALAPPDATA%\YouTubeAutoUploader`. Lần đầu chuyển từ v0.2 có thể cần xác nhận kênh một lần để lưu chế độ ghi nhớ mới; các lần sau hoàn toàn tự khôi phục. Dữ liệu cá nhân chỉ nằm local, không nhúng vào gói phát hành.
 
 Hộp xác nhận áp dụng cho toàn bộ nhóm video đã chọn. Cài đặt kết nối không lặp lại khi token/kênh/playlist vẫn hợp lệ.
 
@@ -118,7 +128,7 @@ Không gửi thư mục này cho người khác; token DPAPI không dùng đư�
 .\.venv\Scripts\python.exe package_app.py
 ```
 
-- `build_windows.py`: gói Windows tại `dist/youtube-auto-uploader-v0.5-windows-x64.zip`, không kèm credentials/token/lịch sử/video.
+- `build_windows.py`: gói Windows tại `dist/youtube-auto-uploader-v0.6-windows-x64.zip`, không kèm credentials/token/lịch sử/video.
 - `package_app.py`: ZIP mã nguồn theo danh sách cho phép; báo cáo thiết lập cá nhân `SETUP_STATUS.md` không được publish.
 - `YouTubeAutoUploader.exe --self-check output.json`: kiểm tra offline runtime, Tkinter, SDK, DPAPI, SQLite và transport 308; không đăng nhập hoặc upload video.
 

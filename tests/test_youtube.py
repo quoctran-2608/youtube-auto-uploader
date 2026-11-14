@@ -161,6 +161,35 @@ class YouTubeTests(unittest.TestCase):
             self.client.upload(dict(self.row, path=str(renamed)))
         self.api.videos.return_value.insert.assert_not_called()
 
+    def test_queue_retry_after_move_finishes_existing_id_without_upload(self):
+        record = self.record()
+        moved = self.folder / 'new-folder'
+        moved.mkdir()
+        target = moved / 'new-name.mp4'
+        target.write_bytes(self.path.read_bytes())
+        self.api.playlistItems.return_value.list.return_value.execute.return_value = {'items': [{'id': 'existing'}]}
+        result = self.client.upload_or_resume(dict(self.row, path=str(target)), 'unlisted', False, lambda *args: None)
+        self.assertEqual(result['id'], record)
+        self.assertEqual(result['state'], 'Uploaded')
+        self.api.videos.return_value.insert.assert_not_called()
+
+    def test_queue_retry_unknown_content_never_uploads(self):
+        self.history.claim('channel-a', fingerprint(self.path), self.row, 'playlist-a', 'unlisted', False)
+        with self.assertRaisesRegex(ValueError, 'chưa rõ kết quả'):
+            self.client.upload_or_resume(self.row, 'unlisted', False, lambda *args: None)
+        self.api.videos.return_value.insert.assert_not_called()
+
+    def test_channel_title_lookup_paginates_and_returns_candidates(self):
+        self.api.channels.return_value.list.return_value.execute.return_value = {'items': [dict(self.channel,
+            contentDetails={'relatedPlaylists': {'uploads': 'uploads-list'}})]}
+        self.api.playlistItems.return_value.list.return_value.execute.side_effect = [
+            {'items': [], 'nextPageToken': 'next'},
+            {'items': [{'snippet': {'title': '  TITLE '}, 'contentDetails': {'videoId': self.video_id}}]}]
+        matches = self.client.matching_channel_titles('Title')
+        self.assertEqual(matches[0]['video_id'], self.video_id)
+        self.assertEqual(self.api.playlistItems.return_value.list.call_args.kwargs['pageToken'], 'next')
+        self.api.videos.return_value.insert.assert_not_called()
+
     def test_unknown_upload_never_restarts(self):
         self.api.videos.return_value.insert.return_value.next_chunk.side_effect = OSError('connection lost')
         with self.assertRaisesRegex(RuntimeError, 'chặn upload lại'):

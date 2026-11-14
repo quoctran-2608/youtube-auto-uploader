@@ -62,7 +62,7 @@ class UploadQueue:
 
     def add(self, rows, channel, playlist, privacy, kids):
         with self.history.connection() as db:
-            active = {json.loads(x[0])['path'] for x in db.execute("SELECT row_json FROM queue_items WHERE state IN ('pending','running','waiting','interrupted')")}
+            active = {json.loads(x[0])['path'] for x in db.execute("SELECT row_json FROM queue_items WHERE state IN ('pending','running','waiting') AND channel_id=?", (channel,))}
             count = 0
             for row in rows:
                 if row['path'] in active:
@@ -100,7 +100,7 @@ class UploadQueue:
             raise ValueError('Hàng đợi thuộc kênh hoặc playlist khác. Kết nối đúng trước khi tiếp tục.')
         self.update(item['id'], state='running', error='', retry_at='')
         try:
-            result = client.upload(json.loads(item['row_json']), item['privacy'], bool(item['kids']), progress)
+            result = client.upload_or_resume(json.loads(item['row_json']), item['privacy'], bool(item['kids']), progress)
             self.update(item['id'], state='done' if result['state'] == 'Uploaded' and result['verified'] else 'attention',
                         error=result['error'], history_id=result['id'])
             return result

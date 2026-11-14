@@ -24,7 +24,7 @@ class QueueTests(unittest.TestCase):
 
     def test_persists_sequence_and_does_not_duplicate_pending_items(self):
         self.assertEqual(self.queue.add(self.rows, 'channel', 'list', 'unlisted', False), 0)
-        self.client.upload.return_value = {'id': 1, 'state': 'Uploaded', 'verified': 'yes', 'error': ''}
+        self.client.upload_or_resume.return_value = {'id': 1, 'state': 'Uploaded', 'verified': 'yes', 'error': ''}
         self.queue.process(self.queue.next(), self.client, lambda *args: None)
         restored = UploadQueue(self.history)
         self.assertEqual(json.loads(restored.next()['row_json'])['title'], 'B')
@@ -32,7 +32,7 @@ class QueueTests(unittest.TestCase):
 
     def test_quota_waits_until_pacific_midnight_and_survives_restart(self):
         now = datetime(2026, 7, 1, 12, tzinfo=UTC)
-        self.client.upload.side_effect = QuotaWait('quotaExceeded')
+        self.client.upload_or_resume.side_effect = QuotaWait('quotaExceeded')
         self.queue.process(self.queue.next(now), self.client, lambda *args: None, now)
         restored = UploadQueue(self.history)
         self.assertIsNone(restored.next(now))
@@ -41,7 +41,7 @@ class QueueTests(unittest.TestCase):
 
     def test_channel_limit_waits_24_hours(self):
         now = datetime(2026, 11, 9, 12, tzinfo=UTC)
-        self.client.upload.side_effect = QuotaWait('uploadLimitExceeded')
+        self.client.upload_or_resume.side_effect = QuotaWait('uploadLimitExceeded')
         self.queue.process(self.queue.next(now), self.client, lambda *args: None, now)
         self.assertEqual(self.queue.all()[0]['retry_at'], '2026-11-10T12:00:00+00:00')
 
@@ -55,7 +55,7 @@ class QueueTests(unittest.TestCase):
         self.client.channel = {'id': 'other'}
         with self.assertRaises(ValueError):
             self.queue.process(self.queue.next(), self.client, lambda *args: None)
-        self.client.upload.assert_not_called()
+        self.client.upload_or_resume.assert_not_called()
 
     def test_pacific_midnight_dst_transitions(self):
         cases = [((2026, 3, 8, 9), (2026, 3, 9, 7)), ((2026, 11, 1, 8), (2026, 11, 2, 8)),

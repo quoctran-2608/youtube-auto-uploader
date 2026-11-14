@@ -277,7 +277,7 @@ class YouTubeClient:
         self.history.update(record_id, error=' | '.join(errors))
         return self.history.get(record_id)
 
-    def upload(self, row, privacy='unlisted', kids=False, progress=lambda value, text: None):
+    def upload(self, row, privacy='unlisted', kids=False, progress=lambda value, text: None, *, resume_existing=False):
         from googleapiclient.http import MediaFileUpload
         if not self.playlist_id:
             raise ValueError('Chưa xác nhận playlist mặc định. Không upload.')
@@ -290,6 +290,11 @@ class YouTubeClient:
         digest = fingerprint(path, lambda fraction: progress(0, f'Đang kiểm tra SHA-256: {fraction:.0%}'))
         existing = self.history.find(self.channel['id'], digest)
         if existing:
+            if resume_existing and existing['video_id']:
+                if existing['playlist_id'] != self.playlist_id:
+                    raise ValueError('Nội dung đã có Video ID nhưng dùng playlist khác. Mở Lịch sử để kiểm tra; không tải lại.')
+                progress(100, 'Đã có Video ID; chỉ kiểm tra video và hoàn tất playlist, không tải lại tệp.')
+                return self.finish(existing['id'])
             if existing['video_id']:
                 raise ValueError(f"Video đã có trong lịch sử: {existing['video_id']}. Chỉ dùng Retry playlist / kiểm tra.")
             raise ValueError('Tệp đã có phiên upload chưa rõ kết quả. Đối chiếu YouTube Studio trước; không upload lại tự động.')
@@ -325,6 +330,32 @@ class YouTubeClient:
             media.stream().close()
         progress(100, f'Đã nhận Video ID: {video_id}; đang xác minh playlist và trạng thái.')
         return self.finish(record_id)
+
+    def upload_or_resume(self, row, privacy, kids, progress):
+        """Queue retry: reuse known content, never create a second upload."""
+        return self.upload(row, privacy, kids, progress, resume_existing=True)
+
+    def matching_channel_titles(self, title, progress=lambda value, text: None):
+        """Read the authenticated channel uploads; titles are candidates only."""
+        self.validate_context(self.playlist_id)
+        channels = self.service.channels().list(part='contentDetails', mine=True).execute().get('items', [])
+        if len(channels) != 1 or channels[0]['id'] != self.channel['id']:
+            raise ValueError('Không xác định đúng kênh đang kết nối.')
+        uploads = channels[0]['contentDetails']['relatedPlaylists']['uploads']
+        token, matches, count = None, [], 0
+        normalize = lambda value: ' '.join(value.casefold().split())
+        while True:
+            response = self.service.playlistItems().list(part='snippet,contentDetails', playlistId=uploads,
+                maxResults=50, pageToken=token).execute()
+            for item in response.get('items', []):
+                snippet = item['snippet']
+                if normalize(snippet['title']) == normalize(title):
+                    matches.append({'title': snippet['title'], 'video_id': item['contentDetails']['videoId']})
+            count += len(response.get('items', []))
+            progress(0, f'Đã kiểm tra {count} video trên kênh…')
+            token = response.get('nextPageToken')
+            if not token:
+                return matches
 
     def reconcile(self, record_id, video_id):
         """Manually attach a Studio-confirmed Video ID after an interrupted response."""

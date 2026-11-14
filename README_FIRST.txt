@@ -1,4 +1,4 @@
-YOUTUBE AUTO UPLOADER v0.5 — WINDOWS
+YOUTUBE AUTO UPLOADER v0.6 — WINDOWS
 
 1. Giải nén TOÀN BỘ ZIP, mở YouTubeAutoUploader.exe, giữ nguyên _internal.
 2. Lần đầu mở Cài đặt: nhập email Google và tên playlist, nhập OAuth JSON,
@@ -18,6 +18,11 @@ OAuth Testing có thể cần chủ kênh cấp lại sau 7 ngày. Khi cần, v�
 Cấp quyền lại / đổi kênh. App không tự mở trình duyệt khi khởi động.
 
 Playlist Pending: Lịch sử > Retry playlist; không upload lại.
+Chuột phải vào clip > Xem lỗi để đọc lý do và hướng xử lý.
+Thử lại / hoàn tất: nếu đã có Video ID, chỉ hoàn tất playlist và xác minh.
+Chuột phải > Sao chép hoặc Gom tất cả clip đỏ để kiểm tra trong thư mục riêng.
+Lịch sử giữ nguyên khi đổi folder; kiểm tra SHA-256 nhận ra cả tệp đổi tên.
+Tìm cùng tiêu đề trên kênh chỉ đưa ra gợi ý để tự đối chiếu.
 Upload Unknown: đối chiếu YouTube Studio và Video ID; không upload lại.
 Hàng đợi lưu trên máy và tiếp tục khi mở app; không chạy khi app đóng hoặc máy ngủ.
 Giữ nguyên đường dẫn tệp. Nếu YouTube báo hết quota, app chờ rồi thử lại.

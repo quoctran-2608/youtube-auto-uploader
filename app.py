@@ -15,6 +15,8 @@ from core import preview, read_config, read_metadata, save_preview
 from storage import History, InstanceLock, SecretStore, Settings, local_directory
 from youtube_client import YouTubeClient, friendly_error
 from upload_queue import UploadQueue, STATUS, estimate_remaining
+from diagnostics import error_advice, copy_for_inspection
+from storage import fingerprint
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 
@@ -126,7 +128,7 @@ class UploaderApp(PreviewApp):
         self.transfer_samples = []
         super().__init__()
         self.folder.set(self.settings.data.get('last_folder', ''))
-        self.title('YouTube Auto Uploader · v0.5')
+        self.title('YouTube Auto Uploader · v0.6')
         self.geometry('1040x700')
         self.minsize(880, 620)
         self.protocol('WM_DELETE_WINDOW', self.close)
@@ -212,6 +214,8 @@ class UploaderApp(PreviewApp):
         ttk.Label(container, textvariable=self.info, wraplength=960, foreground='#576779').pack(anchor='w', pady=(5, 0))
         self.table.bind('<<TreeviewSelect>>', self.selection_changed)
         self.table.bind('<Control-a>', lambda event: self.table.selection_set(self.table.get_children()))
+        self.table.bind('<Button-3>', self.clip_menu)
+        self.table.bind('<Double-1>', lambda event: self.show_clip_details())
         self.settings_window = tk.Toplevel(self)
         self.settings_window.withdraw()
         self.settings_window.title('Cài đặt YouTube Auto Uploader')
@@ -441,7 +445,105 @@ class UploaderApp(PreviewApp):
             self.details.set(f"{row['title']} · Tags: {row['tags'] or '(trống)'}\nMô tả: {row['description'][:180] or '(trống)'}")
             if len(selected) > 1:
                 self.details.set(f'Đã chọn {len(selected)} video. Tải lần lượt theo thứ tự trong danh sách.')
+            else:
+                error, video_id = self.clip_diagnostic(row)
+                if error:
+                    self.details.set(f"{row['title']}\n{error[:220]} · Nhấp đúp hoặc chuột phải → Xem lỗi để đọc đầy đủ.")
         self.update_controls()
+
+    def selected_rows(self):
+        return [self.rows[self.table.index(item)] for item in self.table.selection()]
+
+    def clip_diagnostic(self, row):
+        channel = self.client.channel['id'] if self.client.channel else None
+        records = [r for r in self.history.recent(channel) if r['path'] == row['path']] if channel else []
+        items = [i for i in self.upload_queue.all() if i['channel_id'] == channel and json.loads(i['row_json'])['path'] == row['path']]
+        if items and items[-1]['history_id']:
+            records = [self.history.get(items[-1]['history_id'])]
+        record = records[0] if records else {}
+        errors = list(dict.fromkeys(e for e in ((items[-1]['error'] if items else ''), record.get('error', '')) if e))
+        return '\n'.join(errors), record.get('video_id', '')
+
+    def clip_menu(self, event):
+        item = self.table.identify_row(event.y)
+        if not item:
+            return
+        if item not in self.table.selection():
+            self.table.selection_set(item)
+        menu = tk.Menu(self, tearoff=False)
+        menu.add_command(label='Xem lỗi / hướng xử lý', command=self.show_clip_details)
+        menu.add_command(label='Thử lại / hoàn tất video đã chọn…', command=self.upload_selected, state='disabled' if self.busy else 'normal')
+        menu.add_separator()
+        menu.add_command(label='Sao chép clip đã chọn sang thư mục…', command=self.copy_selected, state='disabled' if self.busy else 'normal')
+        menu.add_command(label='Gom tất cả clip đỏ sang thư mục…', command=lambda: self.copy_selected(True), state='disabled' if self.busy else 'normal')
+        menu.add_separator()
+        menu.add_command(label='Kiểm tra lịch sử bằng nội dung SHA-256', command=self.check_local_content, state='disabled' if self.busy else 'normal')
+        menu.add_command(label='Tìm video cùng tiêu đề trên kênh', command=self.check_channel_title, state='disabled' if self.busy else 'normal')
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def text_dialog(self, title, text):
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.geometry('850x440')
+        box = tk.Text(dialog, wrap='word', font=('Segoe UI', 10), padx=14, pady=14)
+        box.pack(fill='both', expand=True)
+        box.insert('1.0', text)
+        box.configure(state='disabled')
+        ttk.Button(dialog, text='Đóng', command=dialog.destroy).pack(pady=8)
+
+    def show_clip_details(self):
+        rows = self.selected_rows()
+        if not rows:
+            return
+        sections = []
+        for row in rows:
+            error, video_id = self.clip_diagnostic(row)
+            sections.append(f"{row['title']}\nTệp: {row['path']}\nVideo ID: {video_id or 'chưa có / chưa đối chiếu nội dung'}\n\nChi tiết:\n{error or 'Chưa có lỗi ghi nhận cho đường dẫn này.'}\n\nCách xử lý:\n{error_advice(error, video_id)}")
+        self.text_dialog('Chi tiết clip / lỗi đã lưu', '\n\n────────\n\n'.join(sections))
+
+    def copy_selected(self, all_errors=False):
+        if self.busy:
+            return
+        rows = [self.rows[self.table.index(item)] for item in self.table.get_children() if 'error' in self.table.item(item, 'tags')] if all_errors else self.selected_rows()
+        if not rows:
+            messagebox.showinfo('Sao chép', 'Chưa có clip được chọn hoặc clip đỏ trong danh sách hiện tại.', parent=self)
+            return
+        destination = filedialog.askdirectory(title='Chọn thư mục gom bản sao để kiểm tra')
+        if not destination:
+            return
+        def done(result):
+            copied, failures = result
+            self.text_dialog('Kết quả sao chép', f'Đã sao chép {len(copied)} clip.\nTệp gốc được giữ nguyên.\n\n' + '\n'.join(copied + failures))
+        self.run_task(lambda: copy_for_inspection(rows, destination), done)
+
+    def check_local_content(self):
+        rows = self.selected_rows()
+        if self.busy or not rows or not self.ready():
+            return
+        channel = self.client.channel['id']
+        def work():
+            lines = []
+            for row in rows:
+                digest = fingerprint(Path(row['path']))
+                record = self.history.find(channel, digest)
+                lines.append(f"{row['title']}\n" + (f"Đã có nội dung trong lịch sử: {record['state']}\nVideo ID: {record['video_id'] or 'chưa rõ kết quả'}\nĐường dẫn cũ: {record['path']}\n{record['error']}" if record else 'Chưa có SHA-256 này trong lịch sử máy này. Điều đó không đảm bảo kênh chưa có video.'))
+            return '\n\n'.join(lines)
+        self.run_task(work, lambda result: self.text_dialog('Kiểm tra nội dung / lịch sử', result))
+
+    def check_channel_title(self):
+        rows = self.selected_rows()
+        if self.busy or not rows or not self.ready():
+            return
+        row = rows[0]
+        def done(matches):
+            text = f"Tiêu đề: {row['title']}\n\n" + '\n'.join(f"{m['title']}\nhttps://www.youtube.com/watch?v={m['video_id']}" for m in matches)
+            text += '\n\n' + ('Các kết quả cùng tiêu đề cần mở đối chiếu nội dung trong Studio.' if matches else 'Không thấy tiêu đề trùng. Video đã đổi tiêu đề vẫn có thể tồn tại trên kênh.')
+            text += '\nTra cứu tiêu đề không chứng minh hai tệp có cùng nội dung. Kết quả không tự gắn vào lịch sử hoặc tải video.'
+            self.text_dialog('Kết quả tra cứu trên kênh', text)
+        self.run_task(lambda: self.client.matching_channel_titles(row['title'], lambda value, text: self.events.put(('progress', value, text))), done)
 
     def choose_folder(self):
         folder = filedialog.askdirectory(title='Chọn thư mục video', initialdir=self.folder.get() or None)
@@ -501,7 +603,8 @@ class UploaderApp(PreviewApp):
             f"Kênh: {self.client.channel['snippet']['title']}\nChannel ID: {self.client.channel['id']}\n"
             f'Playlist: {self.playlist_title}\nPlaylist ID: {self.client.playlist_id}\n'
             f'Audience: {audience}\nVisibility: {privacy.upper()}\nKhông đặt lịch công khai.\n\n'
-            'Tải tuần tự; khi mở lại app, hàng đợi sẽ tiếp tục. Đồng ý bắt đầu?', parent=self):
+            'Tải tuần tự; khi mở lại app, hàng đợi sẽ tiếp tục.\n'
+            'Nếu nội dung đã có Video ID trong lịch sử: chỉ hoàn tất và xác minh theo cài đặt lần tải trước, không đổi Audience/Visibility.\n\nĐồng ý bắt đầu?', parent=self):
             return
         self.progress['value'] = 0
         self.video_url = ''

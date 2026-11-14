@@ -75,14 +75,14 @@ class StartupTests(unittest.TestCase):
                     app.table.insert('', 'end', values=(row['filename'], name, 1, ''))
                 app.table.selection_set(app.table.get_children())
                 def upload(row, privacy, kids, progress):
-                    return {'id': len(app.client.upload.call_args_list), 'video_id': 'abcdefghijk',
+                    return {'id': len(app.client.upload_or_resume.call_args_list), 'video_id': 'abcdefghijk',
                             'state': 'Uploaded', 'verified': 'yes', 'error': ''}
-                app.client.upload = MagicMock(side_effect=upload)
+                app.client.upload_or_resume = MagicMock(side_effect=upload)
                 with patch('app.messagebox.askyesno', return_value=True) as confirm:
                     app.upload_selected()
                     self.pump(app, lambda: len(app.upload_queue.all()) == 2 and all(x['state'] == 'done' for x in app.upload_queue.all()))
                     confirm.assert_called_once()
-                self.assertEqual([call.args[0]['title'] for call in app.client.upload.call_args_list], ['one', 'two'])
+                self.assertEqual([call.args[0]['title'] for call in app.client.upload_or_resume.call_args_list], ['one', 'two'])
             finally:
                 for identifier in app.tk.call('after', 'info'):
                     app.after_cancel(identifier)

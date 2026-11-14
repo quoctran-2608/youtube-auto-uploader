@@ -28,7 +28,7 @@ Chỉ chọn cách này với người và máy bạn tin cậy. Token trên má
 ### 1. Người nhận tải và mở app
 
 1. Mở [Release mới nhất](https://github.com/quoctran-2608/youtube-auto-uploader/releases/latest).
-2. Tải `youtube-auto-uploader-v0.5-windows-x64.zip`, giải nén toàn bộ, mở `YouTubeAutoUploader.exe`.
+2. Tải `youtube-auto-uploader-v0.6-windows-x64.zip`, giải nén toàn bộ, mở `YouTubeAutoUploader.exe`.
 3. Giữ nguyên `_internal`, `config.json` và `metadata.csv` cạnh `.exe`; không chạy trong ZIP.
 
 Gói Windows đã có Python/thư viện, không cần mở terminal hoặc cài Python. Gói source là lựa chọn khác cho người có kỹ thuật. Gói `.exe` chưa ký số; nếu hệ thống bảo vệ chặn, giữ nguyên bảo vệ và dùng bản source hoặc nhờ quản trị viên kiểm tra.
