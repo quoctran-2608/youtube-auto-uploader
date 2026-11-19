@@ -13,6 +13,37 @@ from storage import Settings, fingerprint
 
 @unittest.skipUnless(os.name == 'nt', 'Windows desktop app')
 class StartupTests(unittest.TestCase):
+    def test_connect_quota_wait_persists_and_retries_silently(self):
+        from datetime import datetime, timedelta, timezone
+        from types import SimpleNamespace
+        from googleapiclient.errors import HttpError
+
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            with patch('app.local_directory', return_value=folder), patch.object(UploaderApp, 'startup'):
+                app = UploaderApp()
+            try:
+                error = HttpError(SimpleNamespace(status=403, reason='Forbidden'),
+                                  b'{"error":{"errors":[{"reason":"quotaExceeded"}]}}')
+                app.client.connect = MagicMock(side_effect=error)
+                with patch('app.messagebox.showerror') as popup:
+                    app.run_task(app.client.connect, app.connected)
+                    self.pump(app, lambda: not app.busy)
+                    popup.assert_not_called()
+                self.assertIn('Chờ hạn mức', app.connection.get())
+                stored = Settings(folder).data['connection_quota_retry_at']
+                self.assertGreater(datetime.fromisoformat(stored), datetime.now(timezone.utc))
+                app.connect()
+                app.client.connect.assert_called_once()
+                app.settings.data['connection_quota_retry_at'] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+                self.pump(app, lambda: app.client.connect.call_count == 2 and not app.busy)
+                self.assertEqual(app.client.connect.call_args.kwargs, {'interactive': False})
+            finally:
+                for identifier in app.tk.call('after', 'info'):
+                    app.after_cancel(identifier)
+                app.lock.close()
+                app.destroy()
+
     def tearDown(self):
         # Dispose Tk cycles on the UI thread before another test starts workers.
         gc.collect()

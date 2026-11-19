@@ -8,13 +8,14 @@ import queue
 import threading
 import webbrowser
 import tkinter as tk
+from datetime import datetime, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from core import preview, read_config, read_metadata, save_preview
 from storage import History, InstanceLock, SecretStore, Settings, local_directory
-from youtube_client import YouTubeClient, friendly_error
-from upload_queue import UploadQueue, STATUS, estimate_remaining
+from youtube_client import YouTubeClient, friendly_error, quota_reason
+from upload_queue import UploadQueue, STATUS, estimate_remaining, pacific_midnight_after
 from diagnostics import error_advice, copy_for_inspection, delete_uploaded_files, find_uploaded_files
 from folder_playlists import folder_title, Mp3Index, plan_history, PlaylistBatch
 from storage import fingerprint
@@ -131,7 +132,7 @@ class UploaderApp(PreviewApp):
         self.transfer_samples = []
         super().__init__()
         self.folder.set(self.settings.data.get('last_folder', ''))
-        self.title('YouTube Auto Uploader · v0.9.1')
+        self.title('YouTube Auto Uploader · v0.9.2')
         self.geometry('1040x700')
         self.minsize(880, 620)
         self.protocol('WM_DELETE_WINDOW', self.close)
@@ -264,13 +265,30 @@ class UploaderApp(PreviewApp):
 
     def startup(self):
         if self.settings.data.get('expected_email') and self.client.secrets.read('credentials') and self.client.secrets.read('token'):
-            self.connection.set('Đang kết nối và kiểm tra kênh đã lưu…')
-            self.run_task(lambda: self.client.connect(interactive=False), self.connected, silent=True)
+            if self.show_connection_quota_wait():
+                self.after(100, self.scan_saved_folder)
+            else:
+                self.auto_connect()
         else:
             self.connection.set('Thiết lập lần đầu trong Cài đặt để bắt đầu.')
             self.reconnect.pack(anchor='w', pady=(0, 8), before=self.count)
             self.show_settings()
             self.after(100, self.scan_saved_folder)
+
+    def show_connection_quota_wait(self):
+        retry = self.settings.data.get('connection_quota_retry_at')
+        if not retry or datetime.fromisoformat(retry) <= datetime.now(timezone.utc):
+            return False
+        local = datetime.fromisoformat(retry).astimezone().strftime('%d/%m %H:%M')
+        self.connection.set(f'Chờ hạn mức YouTube API đến {local} (giờ máy). App sẽ tự kết nối lại.')
+        self.reconnect.pack_forget()
+        return True
+
+    def auto_connect(self):
+        if self.settings.data.pop('connection_quota_retry_at', None):
+            self.settings.save()
+        self.connection.set('Đang kết nối và kiểm tra kênh đã lưu…')
+        self.run_task(lambda: self.client.connect(interactive=False), self.connected, silent=True)
 
     def scan_saved_folder(self):
         if self.folder.get() and not self.busy:
@@ -302,7 +320,7 @@ class UploaderApp(PreviewApp):
             try:
                 self.events.put(('done', callback, function()))
             except Exception as error:
-                self.events.put(('error', friendly_error(error)))
+                self.events.put(('error', friendly_error(error), quota_reason(error)))
         threading.Thread(target=worker, daemon=True).start()
 
     def drain(self):
@@ -325,6 +343,14 @@ class UploaderApp(PreviewApp):
                 self.confirm_check.configure(state='normal' if self.client.channel else 'disabled')
                 if event[0] == 'done':
                     event[1](event[2])
+                elif self.scan_after_failure and event[2] in ('quotaExceeded', 'dailyLimitExceeded'):
+                    self.settings.data['connection_quota_retry_at'] = pacific_midnight_after(datetime.now(timezone.utc)).isoformat()
+                    self.settings.save()
+                    self.confirmed.set(False)
+                    self.update_playlist()
+                    self.show_connection_quota_wait()
+                    self.info.set('YouTube đã dùng hết hạn mức API. Bạn có thể đóng app và mở lại sau giờ thử lại.')
+                    self.after(100, self.scan_saved_folder)
                 else:
                     self.info.set(event[1])
                     self.confirmed.set(self.client.channel_confirmed)
@@ -382,7 +408,7 @@ class UploaderApp(PreviewApp):
         self.info.set(f'Đã nhập credentials project {project}; bản lưu local được mã hóa Windows DPAPI. Bấm Connect YouTube.')
 
     def connect(self, new_login=False):
-        if self.busy:
+        if self.busy or self.show_connection_quota_wait():
             return
         email_label = self.settings.data.get('expected_email') or '(email đã cấu hình)'
         request_consent = new_login or not self.client.secrets.read('token')
@@ -398,6 +424,8 @@ class UploaderApp(PreviewApp):
         self.run_task(lambda: self.client.connect(new_login), self.connected)
 
     def connected(self, channel):
+        if self.settings.data.pop('connection_quota_retry_at', None):
+            self.settings.save()
         self.connection.set(f"Đã kết nối: {channel['snippet']['title']}")
         self.reconnect.pack_forget()
         if not self.client.channel_confirmed:
@@ -1039,6 +1067,8 @@ class UploaderApp(PreviewApp):
     def queue_tick(self):
         review = getattr(self, 'playlist_review', None)
         reviewing = review and review.winfo_exists()
+        if not self.busy and self.settings.data.get('connection_quota_retry_at') and not self.show_connection_quota_wait():
+            self.auto_connect()
         if not self.busy:
             batch = self.playlist_batch.read()
             self.update_playlist_notice(batch)
