@@ -185,8 +185,7 @@ class YouTubeClient:
             self.settings.data['playlist_id'] = ''
             self.settings.save()
         self.channel_confirmed = (self.settings.data.get('approved_channel_id') == self.channel['id']
-            and self.settings.data.get('approved_email') == self.settings.data.get('expected_email')
-            and bool(self.playlist_id))
+            and self.settings.data.get('approved_email') == self.settings.data.get('expected_email'))
         return self.channel
 
     def approve_channel(self):
@@ -206,25 +205,97 @@ class YouTubeClient:
             self.channel_confirmed = True
         self.settings.save()
 
-    def validate_context(self, playlist_id):
+    def validate_channel(self):
         if not self.channel or not self.channel_confirmed:
             raise ValueError('Hãy xác nhận tên kênh và Channel ID trong giao diện trước.')
         channels = self.service.channels().list(part='id', mine=True).execute().get('items', [])
         if len(channels) != 1 or channels[0]['id'] != self.channel['id']:
             self.channel_confirmed = False
             raise ValueError('Kênh OAuth đã thay đổi. Hãy kết nối và xác nhận lại.')
+
+    def validate_context(self, playlist_id):
+        self.validate_channel()
+        self.owned_playlist(playlist_id, self.settings.data['playlist_title'] if playlist_id == self.playlist_id else None)
+
+    def owned_playlist(self, playlist_id, expected_title=None):
         playlists = self.service.playlists().list(part='snippet', id=playlist_id).execute().get('items', [])
         if (len(playlists) != 1 or playlists[0]['snippet']['channelId'] != self.channel['id'] or
-                playlists[0]['snippet']['title'] != self.settings.data['playlist_title']):
-            self.playlist_id = ''
-            self.settings.data['playlist_id'] = ''
-            self.settings.save()
+                expected_title is not None and playlists[0]['snippet']['title'] != expected_title):
+            if playlist_id == self.playlist_id:
+                self.playlist_id = ''
+                self.settings.data['playlist_id'] = ''
+                self.settings.save()
             raise ValueError('Playlist đã đổi tên, bị xóa hoặc không thuộc đúng kênh. Kết nối lại.')
+        return playlists[0]
+
+    def folder_playlist(self, title):
+        if not title or len(title) > 150:
+            raise ValueError('Tên playlist theo thư mục phải có từ 1 đến 150 ký tự.')
+        self.validate_channel()
+        token, matches = None, []
+        while True:
+            page = self.service.playlists().list(part='snippet', mine=True, maxResults=50, pageToken=token).execute()
+            matches.extend(item['id'] for item in page.get('items', []) if item['snippet']['title'] == title
+                           and item['snippet']['channelId'] == self.channel['id'])
+            token = page.get('nextPageToken')
+            if not token:
+                break
+        if len(matches) > 1:
+            raise ValueError(f'Kênh có nhiều playlist cùng tên “{title}”. Hãy đổi tên để chỉ còn một playlist khớp.')
+        if matches:
+            return matches[0]
+        item = self.service.playlists().insert(part='snippet,status', body={
+            'snippet': {'title': title}, 'status': {'privacyStatus': 'private'}}).execute()
+        return item['id']
+
+    def playlist_entries(self, playlist_id, video_id):
+        token = None
+        while True:
+            response = self.service.playlistItems().list(part='id', playlistId=playlist_id,
+                videoId=video_id, maxResults=50, pageToken=token).execute()
+            yield from response.get('items', [])
+            token = response.get('nextPageToken')
+            if not token:
+                break
 
     def membership(self, playlist_id, video_id):
-        response = self.service.playlistItems().list(part='id', playlistId=playlist_id,
-                                                   videoId=video_id, maxResults=50).execute()
-        return bool(response.get('items'))
+        return next(self.playlist_entries(playlist_id, video_id), None) is not None
+
+    def ensure_membership(self, playlist_id, video_id):
+        if not self.membership(playlist_id, video_id):
+            self.service.playlistItems().insert(part='snippet', body={'snippet': {
+                'playlistId': playlist_id,
+                'resourceId': {'kind': 'youtube#video', 'videoId': video_id}}}).execute()
+        for attempt in range(4):
+            if self.membership(playlist_id, video_id):
+                return
+            if attempt < 3:
+                time.sleep(2 ** attempt)
+        raise RuntimeError('YouTube chưa xác nhận video nằm trong playlist. Hãy thử lại sau.')
+
+    def organize_video(self, record, title, remove_old):
+        self.validate_channel()
+        row = self.history.get(record['id'])
+        if (row['channel_id'] != self.channel['id'] or not row['video_id'] or
+                (row['video_id'], row['playlist_id']) != (record['video_id'], record['playlist_id'])):
+            raise ValueError('Lịch sử đã thay đổi hoặc thuộc kênh khác. Hãy lập lại danh sách.')
+        items = self.service.videos().list(part='snippet,status', id=row['video_id']).execute().get('items', [])
+        if (len(items) != 1 or items[0]['snippet']['channelId'] != row['channel_id'] or
+                items[0].get('status', {}).get('uploadStatus') in ('deleted', 'failed', 'rejected')):
+            raise ValueError('Video không còn khả dụng trên kênh đang kết nối.')
+        old = row['playlist_id']
+        if remove_old and old:
+            self.owned_playlist(old)
+        target = self.folder_playlist(title)
+        self.owned_playlist(target, title)
+        self.ensure_membership(target, row['video_id'])
+        if remove_old and old and old != target:
+            for item in list(self.playlist_entries(old, row['video_id'])):
+                self.service.playlistItems().delete(id=item['id']).execute()
+        if remove_old or old == target:
+            self.history.update(row['id'], playlist_id=target, state='Uploaded')
+            self.verify_video(row['id'])
+        return target
 
     def add_playlist(self, record_id):
         row = self.history.get(record_id)
@@ -235,18 +306,7 @@ class YouTubeClient:
         self.history.update(record_id, state='Playlist Pending', error='')
         try:
             self.validate_context(row['playlist_id'])
-            if not self.membership(row['playlist_id'], row['video_id']):
-                self.service.playlistItems().insert(part='snippet', body={'snippet': {
-                    'playlistId': row['playlist_id'],
-                    'resourceId': {'kind': 'youtube#video', 'videoId': row['video_id']}}}).execute()
-            # Playlist reads can lag a successful insert. Retry only reads here.
-            for attempt in range(4):
-                if self.membership(row['playlist_id'], row['video_id']):
-                    break
-                if attempt < 3:
-                    time.sleep(2 ** attempt)
-            else:
-                raise RuntimeError('YouTube chưa xác nhận video nằm trong playlist. Hãy retry playlist sau.')
+            self.ensure_membership(row['playlist_id'], row['video_id'])
             self.history.update(record_id, state='Uploaded', error='')
         except Exception as error:
             self.history.update(record_id, state='Playlist Pending', error=friendly_error(error))
@@ -279,10 +339,14 @@ class YouTubeClient:
 
     def upload(self, row, privacy='unlisted', kids=False, progress=lambda value, text: None, *, resume_existing=False):
         from googleapiclient.http import MediaFileUpload
-        if not self.playlist_id:
+        folder_title = row.get('folder_playlist', '')
+        if not self.playlist_id and not folder_title:
             raise ValueError('Chưa xác nhận playlist mặc định. Không upload.')
         body = video_body(row, privacy, kids)
-        self.validate_context(self.playlist_id)
+        if folder_title:
+            self.validate_channel()
+        else:
+            self.validate_context(self.playlist_id)
         path = Path(row['path'])
         if not path.is_file() or not path.stat().st_size:
             raise ValueError('Video không tồn tại, rỗng hoặc chưa tải offline.')
@@ -291,13 +355,18 @@ class YouTubeClient:
         existing = self.history.find(self.channel['id'], digest)
         if existing:
             if resume_existing and existing['video_id']:
-                if existing['playlist_id'] != self.playlist_id:
+                if folder_title:
+                    self.owned_playlist(existing['playlist_id'], folder_title)
+                elif existing['playlist_id'] != self.playlist_id:
                     raise ValueError('Nội dung đã có Video ID nhưng dùng playlist khác. Mở Lịch sử để kiểm tra; không tải lại.')
                 progress(100, 'Đã có Video ID; chỉ kiểm tra video và hoàn tất playlist, không tải lại tệp.')
                 return self.finish(existing['id'])
             if existing['video_id']:
                 raise ValueError(f"Video đã có trong lịch sử: {existing['video_id']}. Chỉ dùng Retry playlist / kiểm tra.")
             raise ValueError('Tệp đã có phiên upload chưa rõ kết quả. Đối chiếu YouTube Studio trước; không upload lại tự động.')
+        playlist_id = self.folder_playlist(folder_title) if folder_title else self.playlist_id
+        if folder_title:
+            self.owned_playlist(playlist_id, folder_title)
         media = MediaFileUpload(str(path), mimetype='application/octet-stream',
                                 chunksize=8 * 1024 * 1024, resumable=True)
         try:
@@ -305,7 +374,7 @@ class YouTubeClient:
                 raise ValueError('Tệp đã thay đổi sau khi kiểm tra; không upload.')
             request = self.service.videos().insert(part='snippet,status', body=body,
                                                    media_body=media, notifySubscribers=False)
-            record_id = self.history.claim(self.channel['id'], digest, row, self.playlist_id, privacy, kids)
+            record_id = self.history.claim(self.channel['id'], digest, row, playlist_id, privacy, kids)
             try:
                 response = None
                 chunk_received = False
@@ -360,6 +429,8 @@ class YouTubeClient:
     def reconcile(self, record_id, video_id):
         """Manually attach a Studio-confirmed Video ID after an interrupted response."""
         row = self.history.get(record_id)
+        if not self.channel or row['channel_id'] != self.channel['id']:
+            raise ValueError('Lịch sử này thuộc kênh khác. Hãy kết nối đúng kênh.')
         if row['video_id'] or row['state'] not in ('Upload Unknown', 'Uploading'):
             raise ValueError('Chỉ đối chiếu bản ghi chưa có Video ID.')
         if not re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id):

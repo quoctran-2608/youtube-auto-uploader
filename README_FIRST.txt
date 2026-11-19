@@ -1,4 +1,4 @@
-YOUTUBE AUTO UPLOADER v0.8 — WINDOWS
+YOUTUBE AUTO UPLOADER v0.9 — WINDOWS
 
 1. Giải nén TOÀN BỘ ZIP, mở YouTubeAutoUploader.exe, giữ nguyên _internal.
 2. Lần đầu mở Cài đặt: nhập email Google và tên playlist, nhập OAuth JSON,
@@ -10,6 +10,9 @@ YOUTUBE AUTO UPLOADER v0.8 — WINDOWS
    Cột trạng thái: ✓ xanh hoàn tất, ✕ đỏ cần kiểm tra, ● vàng đang tải/chờ.
    Thời gian dự kiến tính từ tốc độ tải thực tế và có thể thay đổi.
 5. Mặc định: Unlisted, Not made for kids, playlist bạn đã cấu hình.
+   Bật Playlist theo thư mục để chọn playlist theo thư mục chứa MP4.
+   Nguồn MP3… dùng thư mục chứa MP3 cùng tên khi video được xuất sang chỗ khác.
+   Sắp playlist video cũ… cho xem trước và chuyển các video đã có ID.
    Không đặt lịch công khai. Muốn đổi mặc định: sửa tùy chọn rồi Lưu mặc định.
 
 Nâng cấp từ v0.2/v0.3: dùng lại dữ liệu local, không cần nhập lại JSON.

@@ -163,7 +163,7 @@ class History:
             return cursor.lastrowid
 
     def update(self, record_id, **values):
-        allowed = {'state', 'video_id', 'error', 'verified'}
+        allowed = {'state', 'video_id', 'error', 'verified', 'playlist_id'}
         if not values or not set(values) <= allowed:
             raise ValueError('Trường lịch sử không hợp lệ')
         with self.connection() as db:

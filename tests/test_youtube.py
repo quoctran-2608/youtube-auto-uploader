@@ -113,6 +113,38 @@ class YouTubeTests(unittest.TestCase):
         self.assertNotIn('publishAt', json.dumps(body))
         self.assertEqual(video_body(self.row, 'private', True)['status']['selfDeclaredMadeForKids'], True)
 
+    def test_upload_can_create_and_use_folder_playlist_without_default(self):
+        self.client.playlist_id = ''
+        playlist = {'id': 'folder-id', 'snippet': {'title': 'Folder', 'channelId': 'channel-a'}}
+        self.api.playlists.return_value.list.side_effect = lambda **args: MagicMock(**{
+            'execute.return_value': {'items': [playlist] if args.get('id') == 'folder-id' else []}})
+        self.api.playlists.return_value.insert.return_value.execute.return_value = playlist
+        self.api.playlistItems.return_value.list.return_value.execute.return_value = {'items': [{'id': 'member'}]}
+        self.upload_response()
+        result = self.client.upload(dict(self.row, folder_playlist='Folder'))
+        self.assertEqual(result['playlist_id'], 'folder-id')
+        self.assertEqual(result['state'], 'Uploaded')
+        self.assertEqual(self.api.playlists.return_value.insert.call_args.kwargs['body']['status']['privacyStatus'], 'private')
+
+    def test_move_verifies_destination_before_removing_only_source_memberships(self):
+        record_id = self.record()
+        old = self.history.get(record_id)
+        target = {'id': 'folder-id', 'snippet': {'title': 'Folder', 'channelId': 'channel-a'}}
+        self.api.playlists.return_value.list.side_effect = lambda **args: MagicMock(**{
+            'execute.return_value': {'items': [self.playlist] if args.get('id') == 'playlist-a' else [target]}})
+        members = self.api.playlistItems.return_value
+        members.list.return_value.execute.side_effect = OSError('read failed')
+        with self.assertRaises(OSError):
+            self.client.organize_video(old, 'Folder', True)
+        members.delete.assert_not_called()
+        self.assertEqual(self.history.get(record_id)['playlist_id'], 'playlist-a')
+        members.list.return_value.execute.side_effect = [
+            {'items': []}, {'items': [{'id': 'verified-target'}]}, {'items': [{'id': 'old-member'}]}]
+        self.client.organize_video(old, 'Folder', True)
+        members.delete.assert_called_once_with(id='old-member')
+        self.assertEqual(self.history.get(record_id)['playlist_id'], 'folder-id')
+        self.api.videos.return_value.insert.assert_not_called()
+
     def test_playlist_failure_persists_id_retry_does_not_upload(self):
         self.upload_response()
         self.api.playlistItems.return_value.list.return_value.execute.return_value = {'items': []}

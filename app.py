@@ -16,6 +16,7 @@ from storage import History, InstanceLock, SecretStore, Settings, local_director
 from youtube_client import YouTubeClient, friendly_error
 from upload_queue import UploadQueue, STATUS, estimate_remaining
 from diagnostics import error_advice, copy_for_inspection, delete_uploaded_files, find_uploaded_files
+from folder_playlists import folder_title, Mp3Index, plan_history
 from storage import fingerprint
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
@@ -129,7 +130,7 @@ class UploaderApp(PreviewApp):
         self.transfer_samples = []
         super().__init__()
         self.folder.set(self.settings.data.get('last_folder', ''))
-        self.title('YouTube Auto Uploader · v0.8')
+        self.title('YouTube Auto Uploader · v0.9')
         self.geometry('1040x700')
         self.minsize(880, 620)
         self.protocol('WM_DELETE_WINDOW', self.close)
@@ -161,6 +162,7 @@ class UploaderApp(PreviewApp):
         self.action(header, 'Cài đặt', self.show_settings, side='right')
         self.action(header, 'Lịch sử', self.show_history, side='right', padx=8)
         self.action(header, 'Hàng đợi', self.show_queue, side='right')
+        self.action(header, 'Sắp playlist video cũ…', self.organize_history, side='right', padx=8)
         self.connection = tk.StringVar(value='Đang chuẩn bị kết nối…')
         ttk.Label(container, textvariable=self.connection, wraplength=960, foreground='#285b8d').pack(anchor='w', pady=(8, 3))
         self.playlist = tk.StringVar(value=self.playlist_title)
@@ -201,6 +203,10 @@ class UploaderApp(PreviewApp):
         self.kids = tk.BooleanVar(value=self.settings.data['made_for_kids'])
         self.kids_check = ttk.Checkbutton(options, text='Dành cho trẻ em', variable=self.kids)
         self.kids_check.pack(side='left')
+        self.by_folder = tk.BooleanVar(value=self.settings.data.get('playlist_by_folder', False))
+        ttk.Checkbutton(options, text='Playlist theo thư mục', variable=self.by_folder,
+                        command=self.save_playlist_mode).pack(side='left', padx=12)
+        self.action(options, 'Nguồn MP3…', self.configure_mp3_source, side='left')
         self.action(options, 'Lưu mặc định', self.save_defaults, side='right')
         cleanup = ttk.Frame(container)
         cleanup.pack(fill='x', pady=(6, 0))
@@ -247,7 +253,7 @@ class UploaderApp(PreviewApp):
 
     def update_controls(self):
         if hasattr(self, 'upload_button'):
-            ready = self.client.channel_confirmed and bool(self.client.playlist_id) and not self.busy and bool(self.table.selection()) and all(row['path'] not in self.deleted_local for row in self.selected_rows())
+            ready = self.client.channel_confirmed and (self.client.playlist_id or self.by_folder.get()) and not self.busy and bool(self.table.selection()) and all(row['path'] not in self.deleted_local for row in self.selected_rows())
             self.upload_button.configure(state='normal' if ready else 'disabled')
         if hasattr(self, 'delete_button'):
             eligible = not self.busy and any('done' in self.table.item(item, 'tags') for item in self.table.selection())
@@ -379,7 +385,7 @@ class UploaderApp(PreviewApp):
         request_consent = new_login or not self.client.secrets.read('token')
         if request_consent and not messagebox.askokcancel('Quyền truy cập OAuth',
             f'Đăng nhập {email_label} và tự cấp quyền trong trình duyệt.\n\n'
-            'youtube.force-ssl: đọc kênh/playlist, upload và thêm video vào playlist. '
+            'youtube.force-ssl: đọc kênh/playlist, upload, tạo playlist và quản lý mục trong playlist theo xác nhận của bạn. '
             'Google cũng cho quyền này khả năng sửa/xóa video, bình luận và phụ đề; app chỉ dùng các thao tác nêu trên.\n\n'
             'openid + email: kiểm tra địa chỉ email đã xác minh. Token được mã hóa bằng Windows DPAPI, '
             'lưu ngoài thư mục dự án/Drive. Chưa upload video khi kết nối.\n\nTiếp tục mở kết nối?', parent=self):
@@ -401,7 +407,10 @@ class UploaderApp(PreviewApp):
                 self.client.channel_confirmed = True
         self.confirmed.set(self.client.channel_confirmed)
         self.update_playlist()
-        if not self.client.playlists:
+        if self.client.channel_confirmed and self.by_folder.get():
+            self.info.set('Sẵn sàng. Video mới sẽ dùng playlist theo thư mục.')
+            self.settings_window.withdraw()
+        elif not self.client.playlists:
             self.info.set('Không tìm thấy playlist đúng tên trên kênh này. Kiểm tra trong Cài đặt.')
         elif not self.client.playlist_id:
             self.choose_playlist()
@@ -655,14 +664,164 @@ class UploaderApp(PreviewApp):
         self.show_defaults()
         self.info.set('Đã lưu Audience và Visibility cho lần chạy sau. Playlist được lưu theo Channel ID.')
 
-    def ready(self):
-        if not self.client.channel or not self.client.channel_confirmed or not self.client.playlist_id:
-            messagebox.showinfo('Chưa sẵn sàng', 'Hãy kết nối, xác nhận đúng kênh và chọn playlist đã kiểm tra bằng API.', parent=self)
+    def save_playlist_mode(self):
+        self.settings.data['playlist_by_folder'] = self.by_folder.get()
+        self.settings.save()
+        self.update_controls()
+
+    def configure_mp3_source(self):
+        current = self.settings.data.get('mp3_source', '')
+        action = messagebox.askyesnocancel('Nguồn tên playlist khi tải video mới',
+            f"Nguồn hiện tại: {current or 'thư mục chứa MP4'}\n\nCó: chọn thư mục MP3 để đối chiếu tên MP4.\nKhông: dùng thư mục chứa MP4.\nHủy: giữ lựa chọn hiện tại.", parent=self)
+        if action is None:
+            return
+        folder = filedialog.askdirectory(title='Chọn thư mục gốc chứa MP3', initialdir=current or None, parent=self) if action else ''
+        if action and not folder:
+            return
+        self.settings.data['mp3_source'] = folder
+        self.by_folder.set(True)
+        self.save_playlist_mode()
+        self.info.set(f"Nguồn tên playlist: {folder or 'thư mục chứa MP4'}")
+
+    def organize_history(self):
+        if self.busy or not self.ready(require_playlist=False):
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title('Sắp playlist video cũ')
+        dialog.transient(self)
+        panel = ttk.Frame(dialog, padding=16)
+        panel.pack(fill='both', expand=True)
+        ttk.Label(panel, text='Chọn nguồn tên thư mục để lập danh sách chuyển.', wraplength=520).pack(anchor='w', pady=(0, 10))
+
+        def start(use_mp3):
+            if self.busy:
+                return
+            folder = filedialog.askdirectory(title='Chọn thư mục gốc chứa MP3', parent=dialog) if use_mp3 else None
+            if use_mp3 and not folder:
+                return
+            channel = self.client.channel['id']
+            dialog.destroy()
+            self.info.set('Đang lập danh sách playlist đề xuất…')
+            self.run_task(lambda: plan_history(self.history.recent(channel), Mp3Index(folder) if folder else None),
+                          self.review_playlist_plan)
+
+        ttk.Button(panel, text='Dùng thư mục từng lưu trong lịch sử', command=lambda: start(False)).pack(fill='x', pady=4)
+        ttk.Button(panel, text='Chọn thư mục MP3 để đối chiếu tên', command=lambda: start(True)).pack(fill='x', pady=4)
+        dialog.grab_set()
+
+    def review_playlist_plan(self, proposals):
+        if not proposals:
+            messagebox.showinfo('Sắp playlist video cũ', 'Kênh này chưa có Video ID trong lịch sử trên máy.', parent=self)
+            return
+        dialog = tk.Toplevel(self)
+        self.playlist_review = dialog
+        dialog.title('Xem trước playlist cho video cũ')
+        dialog.geometry('1100x570')
+        dialog.transient(self)
+        panel = ttk.Frame(dialog, padding=12)
+        panel.pack(fill='both', expand=True)
+        ttk.Label(panel, text='Bấm vào dòng để chọn hoặc bỏ chọn. Tên gần giống cần chọn thủ công sau khi kiểm tra.',
+                  wraplength=1000).pack(anchor='w', pady=(0, 8))
+        frame = ttk.Frame(panel)
+        frame.pack(fill='both', expand=True)
+        tree = ttk.Treeview(frame, columns=('use', 'title', 'target', 'detail'), show='headings', selectmode='browse')
+        for key, label, width in [('use', 'Dùng', 58), ('title', 'Video', 320), ('target', 'Playlist đích', 280), ('detail', 'Căn cứ', 290)]:
+            tree.heading(key, text=label)
+            tree.column(key, width=width, stretch=key != 'use')
+        scroll = ttk.Scrollbar(frame, orient='vertical', command=tree.yview)
+        tree.configure(yscrollcommand=scroll.set)
+        tree.pack(side='left', fill='both', expand=True)
+        scroll.pack(side='right', fill='y')
+        chosen = set()
+        for i, item in enumerate(proposals):
+            if item['automatic'] and item['target']:
+                chosen.add(i)
+            tree.insert('', 'end', iid=str(i), values=('✓' if i in chosen else '—', item['record']['title'],
+                                                      item['target'], item['detail']))
+        detail = tk.StringVar(value='Chọn một dòng để xem đường dẫn dùng để đối chiếu.')
+        ttk.Label(panel, textvariable=detail, wraplength=1020).pack(anchor='w', pady=8)
+        remove_old = tk.BooleanVar(value=True)
+        ttk.Checkbutton(panel, text='Gỡ khỏi playlist cũ ghi trong lịch sử sau khi thêm và xác minh playlist đích',
+                        variable=remove_old).pack(anchor='w')
+        buttons = ttk.Frame(panel)
+        buttons.pack(fill='x', pady=(8, 0))
+
+        def mark(i, enabled):
+            if enabled:
+                chosen.add(i)
+            else:
+                chosen.discard(i)
+            tree.set(str(i), 'use', '✓' if enabled else '—')
+            apply.configure(text=f'Áp dụng cho {len(chosen)} video…', state='normal' if chosen else 'disabled')
+
+        def toggle(event):
+            iid = tree.identify_row(event.y)
+            if iid:
+                i = int(iid)
+                item = proposals[i]
+                detail.set(f"{item['record']['video_id']} · {item['source']}")
+                if item['target']:
+                    mark(i, i not in chosen)
+
+        def select_suggestions():
+            for i, item in enumerate(proposals):
+                if item['target'] and not item['detail'].startswith('Gần giống'):
+                    mark(i, True)
+
+        def clear_suggestions():
+            for i in tuple(chosen):
+                mark(i, False)
+
+        def execute():
+            if self.busy or not chosen or not self.ready(require_playlist=False):
+                return
+            picked = [proposals[i] for i in sorted(chosen)]
+            move = remove_old.get()
+            action = 'Chuyển playlist' if move else 'Thêm vào playlist đích'
+            if not messagebox.askyesno(action, f'{action} cho {len(picked)} video?\n'
+                'Playlist mới được tạo ở chế độ Riêng tư. Video dùng lại Video ID hiện có.', parent=dialog):
+                return
+            dialog.destroy()
+            self.run_task(lambda: self.apply_playlist_plan(picked, move),
+                          lambda result: self.text_dialog('Kết quả sắp playlist', result))
+
+        tree.bind('<ButtonRelease-1>', toggle)
+        ttk.Button(buttons, text='Chọn tất cả đề xuất rõ ràng', command=select_suggestions).pack(side='left')
+        ttk.Button(buttons, text='Bỏ chọn hết', command=clear_suggestions).pack(side='left', padx=8)
+        apply = ttk.Button(buttons, text=f'Áp dụng cho {len(chosen)} video…', command=execute,
+                           state='normal' if chosen else 'disabled')
+        apply.pack(side='right')
+        dialog.grab_set()
+
+    def apply_playlist_plan(self, proposals, remove_old):
+        from youtube_client import quota_reason
+        results, completed = [], 0
+        for index, item in enumerate(proposals, 1):
+            record, target = item['record'], item['target']
+            self.events.put(('progress', (index - 1) * 100 / len(proposals), f'Đang sắp playlist {index}/{len(proposals)}…'))
+            try:
+                self.client.organize_video(record, target, remove_old)
+                completed += 1
+                results.append(f"✓ {record['title']} → {target}")
+            except Exception as error:
+                results.append(f"✕ {record['title']} → {target}\n{friendly_error(error)}")
+                if quota_reason(error) or not self.client.channel_confirmed:
+                    results.append(f'Dừng đợt này. Còn {len(proposals) - index} mục chưa xử lý. Hãy lập lại danh sách sau khi kết nối hoặc hạn mức khôi phục.')
+                    break
+        return f'Đã hoàn tất {completed}/{len(proposals)} video.\n\n' + '\n\n'.join(results)
+
+    def ready(self, require_playlist=True):
+        if not self.client.channel or not self.client.channel_confirmed or (require_playlist and not self.client.playlist_id):
+            message = 'Hãy kết nối YouTube và xác nhận đúng kênh.'
+            if require_playlist:
+                message += ' Chọn playlist mặc định trong Cài đặt nếu chưa có.'
+            messagebox.showinfo('Chưa sẵn sàng', message, parent=self)
             return False
         return True
 
     def upload_selected(self):
-        if not self.ready():
+        by_folder = self.by_folder.get()
+        if self.busy or not self.ready(require_playlist=not by_folder):
             return
         selected = self.table.selection()
         if not selected:
@@ -673,18 +832,59 @@ class UploaderApp(PreviewApp):
             messagebox.showinfo('Tệp đã xóa', 'Bỏ chọn các dòng Đã xoá trong máy hoặc quét lại thư mục.', parent=self)
             return
         privacy, kids = self.privacy.get(), self.kids.get()
+        mp3_root = self.settings.data.get('mp3_source', '') if by_folder else ''
+        if mp3_root:
+            def match_rows():
+                index = Mp3Index(mp3_root)
+                matched, uncertain = [], []
+                for row in rows:
+                    path, reason = index.match(row['path'])
+                    if reason == 'Tên khớp' and folder_title(str(path)):
+                        matched.append(dict(row, folder_playlist=folder_title(str(path))))
+                    else:
+                        uncertain.append(f"{row['filename']} · {reason}")
+                return matched, uncertain
+
+            def review_matches(result):
+                matched, uncertain = result
+                if uncertain:
+                    self.text_dialog('Video chưa ghép được với MP3',
+                        'Các video sau cần đối chiếu lại tên MP3 trước khi đưa vào hàng đợi.\n\n' + '\n'.join(uncertain))
+                if matched and self.ready(require_playlist=False):
+                    self.enqueue_rows(matched, privacy, kids, True, len(uncertain))
+
+            self.run_task(match_rows, review_matches)
+            return
+        if by_folder:
+            for row in rows:
+                row['folder_playlist'] = folder_title(row['path'])
+        self.enqueue_rows(rows, privacy, kids, by_folder)
+
+    def enqueue_rows(self, rows, privacy, kids, by_folder, skipped=0):
+        playlist_info = f'Playlist cố định: {self.playlist_title}'
+        if by_folder:
+            if any(not row['folder_playlist'] or len(row['folder_playlist']) > 150 for row in rows):
+                messagebox.showerror('Tên playlist', 'Một số video thiếu tên thư mục chứa hợp lệ hoặc tên dài quá 150 ký tự.', parent=self)
+                return
+            titles = sorted({row['folder_playlist'] for row in rows})
+            playlist_info = f'{len(titles)} playlist theo thư mục: ' + ', '.join(titles[:8])
+            if len(titles) > 8:
+                playlist_info += f' và {len(titles) - 8} playlist khác'
+            playlist_info += '. Playlist tạo mới ở chế độ Riêng tư.'
+        if skipped:
+            playlist_info += f' Bỏ qua {skipped} video chưa khớp tên MP3.'
         audience = 'Made for kids' if kids else 'Not made for kids'
         if not messagebox.askyesno('Xác nhận hàng đợi upload',
             f"Số video: {len(rows)}\n"
             f"Kênh: {self.client.channel['snippet']['title']}\nChannel ID: {self.client.channel['id']}\n"
-            f'Playlist: {self.playlist_title}\nPlaylist ID: {self.client.playlist_id}\n'
+            f'{playlist_info}\n'
             f'Audience: {audience}\nVisibility: {privacy.upper()}\nKhông đặt lịch công khai.\n\n'
             'Tải tuần tự; khi mở lại app, hàng đợi sẽ tiếp tục.\n'
             'Nếu nội dung đã có Video ID trong lịch sử: chỉ hoàn tất và xác minh theo cài đặt lần tải trước, không đổi Audience/Visibility.\n\nĐồng ý bắt đầu?', parent=self):
             return
         self.progress['value'] = 0
         self.video_url = ''
-        count = self.upload_queue.add(rows, self.client.channel['id'], self.client.playlist_id, privacy, kids)
+        count = self.upload_queue.add(rows, self.client.channel['id'], '' if by_folder else self.client.playlist_id, privacy, kids)
         self.settings.data['queue_paused'] = False
         self.settings.save()
         self.result.set(f'Đã thêm {count} video vào hàng đợi. Xem tiến trình trong Hàng đợi.')
@@ -726,9 +926,9 @@ class UploaderApp(PreviewApp):
             text = 'Hàng đợi đã hết mục chờ.' + (' Có mục cần kiểm tra.' if attention else '') if items else 'Chưa có hàng đợi.'
         elif self.settings.data.get('queue_paused'):
             text = 'Đã tạm dừng; chưa thể ước tính giờ hoàn thành.'
-        elif not self.client.channel_confirmed or not self.client.playlist_id:
+        elif not self.client.channel_confirmed:
             text = 'Chưa kết nối; chưa thể ước tính giờ hoàn thành.'
-        elif any(item['channel_id'] != self.client.channel['id'] or item['playlist_id'] != self.client.playlist_id for item in active):
+        elif any(item['channel_id'] != self.client.channel['id'] or (item['playlist_id'] and item['playlist_id'] != self.client.playlist_id) for item in active):
             text = 'Có video thuộc kênh hoặc playlist khác; chưa thể ước tính.'
         elif active[0]['state'] == 'waiting' and active[0]['retry_at'] and datetime.fromisoformat(active[0]['retry_at']) > datetime.now(timezone.utc):
             retry = datetime.fromisoformat(active[0]['retry_at']).astimezone().strftime('%d/%m %H:%M')
@@ -756,10 +956,11 @@ class UploaderApp(PreviewApp):
 
 
     def queue_tick(self):
-        if not self.busy and not self.settings.data.get('queue_paused', False):
+        review = getattr(self, 'playlist_review', None)
+        if not self.busy and not self.settings.data.get('queue_paused', False) and not (review and review.winfo_exists()):
             item = self.upload_queue.next()
-            if item and self.client.channel_confirmed and self.client.playlist_id:
-                if self.client.channel['id'] != item['channel_id'] or self.client.playlist_id != item['playlist_id']:
+            if item and self.client.channel_confirmed:
+                if self.client.channel['id'] != item['channel_id'] or (item['playlist_id'] and self.client.playlist_id != item['playlist_id']):
                     self.info.set('Hàng đợi thuộc kênh hoặc playlist khác; kết nối đúng để tiếp tục.')
                 else:
                     row = json.loads(item['row_json'])
@@ -827,7 +1028,9 @@ class UploaderApp(PreviewApp):
         for index, item in enumerate(self.upload_queue.all(), 1):
             retry = datetime.fromisoformat(item['retry_at']).astimezone().strftime('%d/%m/%Y %H:%M') if item['retry_at'] else ''
             label, tag = STATUS.get(item['state'], (item['state'], ''))
-            self.queue_table.insert('', 'end', iid=str(item['id']), values=(index, json.loads(item['row_json'])['title'], label, retry, item['error']), tags=(tag,))
+            row = json.loads(item['row_json'])
+            description = item['error'] or (f"Playlist đích: {row['folder_playlist']}" if row.get('folder_playlist') else '')
+            self.queue_table.insert('', 'end', iid=str(item['id']), values=(index, row['title'], label, retry, description), tags=(tag,))
         self.queue_status.set('Đã tạm dừng' if self.settings.data.get('queue_paused') else 'Đang hoạt động')
 
     def toggle_queue(self):
@@ -890,7 +1093,7 @@ class UploaderApp(PreviewApp):
         return self.history.get(int(selected[0]))
 
     def retry(self):
-        if not self.ready():
+        if not self.ready(require_playlist=False):
             return
         row = self.selected_history()
         if row:
@@ -900,7 +1103,7 @@ class UploaderApp(PreviewApp):
             self.run_task(lambda: self.client.finish(row['id']), self.upload_finished)
 
     def reconcile(self):
-        if not self.ready():
+        if not self.ready(require_playlist=False):
             return
         row = self.selected_history()
         if row:

@@ -1,11 +1,11 @@
-# YouTube Auto Uploader — v0.8
+# YouTube Auto Uploader — v0.9
 
 Ứng dụng Windows để quét video, đọc metadata CSV và upload nhiều video tuần tự lên kênh YouTube của bạn. Mặc định: **Unlisted**, **Not made for kids**, playlist đã cấu hình. Không tự đặt lịch Public.
 
 ## Bắt đầu nhanh — không cần cài Python
 
 1. Mở [Releases](https://github.com/quoctran-2608/youtube-auto-uploader/releases/latest).
-2. Tải **youtube-auto-uploader-v0.8-windows-x64.zip** trong phần Assets. Đây là gói Windows có `.exe`; nút **Code → Download ZIP** chỉ tải mã nguồn.
+2. Tải **youtube-auto-uploader-v0.9-windows-x64.zip** trong phần Assets. Đây là gói Windows có `.exe`; nút **Code → Download ZIP** chỉ tải mã nguồn.
 3. Giải nén toàn bộ vào thư mục local, ví dụ `D:\YouTubeAutoUploader`. Không chạy ngay trong ZIP, không tách `.exe` khỏi thư mục `_internal`.
 4. Mở **YouTubeAutoUploader.exe**. Lần đầu, chủ kênh phải thiết lập OAuth trên máy này theo [SHARING.md](SHARING.md).
 5. Lần đầu mở **Cài đặt**: nhập email/tên playlist, nhập OAuth JSON rồi kết nối YouTube và xác nhận đúng kênh một lần.
@@ -50,7 +50,14 @@ Chủ kênh thực hiện trên từng máy được tin cậy:
 
 Bấm **Cài đặt → Tài khoản & tên playlist** để nhập email Google và tên playlist chính xác. Các giá trị này chỉ lưu local trong settings.json, không nằm trong repo. `owner@example.com` là ví dụ, không phải tài khoản mặc định. Khi đổi kênh, app xác nhận lại playlist bằng API.
 
-`youtube.force-ssl` đáp ứng upload, đọc kênh/playlist và thêm video vào playlist; `youtube.upload` riêng lẻ không đủ thêm playlist. Google cấp scope này cả khả năng sửa/xóa video, đánh giá, bình luận và phụ đề. App chỉ gọi các thao tác upload/đọc/thêm playlist nêu trên. `openid` và `userinfo.email` dùng để kiểm tra đúng email đã xác minh.
+`youtube.force-ssl` cho phép upload, đọc kênh và quản lý playlist sau khi bạn xác nhận. Google cấp scope này cả khả năng sửa/xóa video, đánh giá, bình luận và phụ đề. App dùng quyền đó để tải và kiểm tra video, tạo playlist, thêm và gỡ mục khỏi playlist. `openid` và `userinfo.email` dùng để kiểm tra đúng email đã xác minh.
+
+## Playlist theo thư mục
+
+- **Video mới:** bật **Playlist theo thư mục** rồi thêm video vào hàng đợi như thường. App lấy tên thư mục trực tiếp chứa mỗi MP4. Nếu MP4 được xuất chung một chỗ, bấm **Nguồn MP3…** và chọn thư mục gốc MP3. App sẽ đối chiếu tên MP4 với MP3, dùng tên thư mục chứa MP3 và báo riêng các clip chưa có tên khớp duy nhất. Chọn **Không** trong **Nguồn MP3…** để quay về dùng thư mục MP4. Cài đặt nguồn MP3 chỉ lưu trên máy.
+- **Video cũ:** bấm **Sắp playlist video cũ…** rồi chọn **Dùng thư mục từng lưu trong lịch sử** hoặc **Chọn thư mục MP3 để đối chiếu tên**. Đường dẫn cũ vẫn dùng được khi tệp MP4 đã được chuyển hoặc dọn khỏi máy. Kiểm tra playlist đích trong bản xem trước. Chọn các dòng cần dùng rồi bấm **Áp dụng**. App chỉ xử lý bản ghi có Video ID trên kênh đang kết nối.
+- **Quy tắc ghép:** khi đối chiếu MP3, app bỏ phần mở rộng, chuẩn hóa chữ hoa/thường và dấu phân cách, giữ dấu tiếng Việt. Tên khớp duy nhất được chọn sẵn trong bản xem trước video cũ. Tên tương tự từ 98% cần chọn thủ công. Tên trùng hoặc nhiều ứng viên gần giống được để lại để bạn kiểm tra. Với đường dẫn cũ, dùng nút **Chọn tất cả đề xuất rõ ràng** sau khi kiểm tra thư mục lưu trong lịch sử có đúng chủ đề.
+- **Chuyển hay giữ playlist cũ:** mặc định gỡ khỏi playlist cũ ghi trong lịch sử sau khi app xác minh video đã nằm trong playlist đích. Bỏ tích ô này để video nằm trong cả hai playlist. App xử lý từng video bằng ID hiện có, nên bạn có thể lập lại danh sách nếu kết nối gián đoạn hoặc hết hạn mức. Playlist mới ở chế độ **Riêng tư**. Nếu có nhiều playlist cùng tên, app báo để bạn kiểm tra. Các tệp MP3 chỉ dùng để đối chiếu. Tệp tải lên vẫn là video.
 
 **Testing có giới hạn 7 ngày:** Google có thể yêu cầu chủ kênh cấp quyền lại sau bảy ngày. Dùng **Cài đặt → Cấp quyền lại / đổi kênh** khi cần. Khi mở app, token không còn dùng được sẽ hiện nút kết nối lại; không tự mở trình duyệt hoặc hỏi lặp lại. Repo này không tự chuyển Production hoặc gửi xác minh.
 
@@ -101,7 +108,7 @@ Sau khi xóa thành công, dòng vẫn nằm trong danh sách chính với trạ
 | `Playlist Pending` | Đã có Video ID. Mở **Lịch sử / Retry playlist**, chọn bản ghi và bấm **Retry playlist / kiểm tra**; không upload lại |
 | `Upload Unknown` hoặc `Uploading` sau khi bị tắt đột ngột | Kiểm tra Studio. Nếu video đã có, dùng **Đối chiếu Video ID từ Studio** và nhập ID đúng 11 ký tự; không upload lại |
 | Token hết hạn / bị thu hồi | **Cài đặt → Cấp quyền lại / đổi kênh**, để chủ kênh tự cấp quyền lại |
-| Không thấy playlist | Kiểm tra đúng kênh và đúng tên. App không tự tạo playlist |
+| Không thấy playlist cố định | Kiểm tra đúng kênh và tên trong Cài đặt. Chế độ theo thư mục sẽ tạo playlist đích khi cần |
 | HTTP 403 | Kiểm tra API đã bật, scope, test user và quota; xem mã lỗi trong lịch sử |
 
 Upload theo chunk 8 MiB bằng resumable upload, xử lý `308 Resume Incomplete` qua transport chuẩn của Google. SHA-256 chống trùng theo từng Channel ID kể cả khi đổi tên/đường dẫn. Video ID được lưu trước bước playlist. Trước khi thêm playlist, kiểm tra membership; sau khi thêm, chờ đọc xác minh nếu YouTube cập nhật chậm. Nếu app khởi động lại giữa upload, không tự mở phiên upload mới cho cùng nội dung.
@@ -110,7 +117,7 @@ Upload theo chunk 8 MiB bằng resumable upload, xử lý `308 Resume Incomplete
 
 ## Nâng cấp từ bản trước
 
-Tải bản Windows v0.8 và giải nén toàn bộ vào thư mục mới, mở `.exe` mới. Không cần chép token hoặc nhập lại credentials: app tiếp tục dùng dữ liệu ở `%LOCALAPPDATA%\YouTubeAutoUploader`. Lần đầu chuyển từ v0.2 có thể cần xác nhận kênh một lần để lưu chế độ ghi nhớ mới; các lần sau hoàn toàn tự khôi phục. Dữ liệu cá nhân chỉ nằm local, không nhúng vào gói phát hành.
+Tải bản Windows v0.9 và giải nén toàn bộ vào thư mục mới, mở `.exe` mới. Không cần chép token hoặc nhập lại credentials: app tiếp tục dùng dữ liệu ở `%LOCALAPPDATA%\YouTubeAutoUploader`. Lần đầu chuyển từ v0.2 có thể cần xác nhận kênh một lần để lưu chế độ ghi nhớ mới; các lần sau hoàn toàn tự khôi phục. Dữ liệu cá nhân chỉ nằm local, không nhúng vào gói phát hành.
 
 Hộp xác nhận áp dụng cho toàn bộ nhóm video đã chọn. Cài đặt kết nối không lặp lại khi token/kênh/playlist vẫn hợp lệ.
 
@@ -134,7 +141,7 @@ Không gửi thư mục này cho người khác; token DPAPI không dùng đư�
 .\.venv\Scripts\python.exe package_app.py
 ```
 
-- `build_windows.py`: gói Windows tại `dist/youtube-auto-uploader-v0.8-windows-x64.zip`, không kèm credentials/token/lịch sử/video.
+- `build_windows.py`: gói Windows tại `dist/youtube-auto-uploader-v0.9-windows-x64.zip`, không kèm credentials/token/lịch sử/video.
 - `package_app.py`: ZIP mã nguồn theo danh sách cho phép; báo cáo thiết lập cá nhân `SETUP_STATUS.md` không được publish.
 - `YouTubeAutoUploader.exe --self-check output.json`: kiểm tra offline runtime, Tkinter, SDK, DPAPI, SQLite và transport 308; không đăng nhập hoặc upload video.
 

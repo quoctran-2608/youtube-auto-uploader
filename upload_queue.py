@@ -96,7 +96,7 @@ class UploadQueue:
             return dict(first)
 
     def process(self, item, client, progress, now=None):
-        if not client.channel or not client.channel_confirmed or client.channel['id'] != item['channel_id'] or client.playlist_id != item['playlist_id']:
+        if not client.channel or not client.channel_confirmed or client.channel['id'] != item['channel_id'] or (item['playlist_id'] and client.playlist_id != item['playlist_id']):
             raise ValueError('Hàng đợi thuộc kênh hoặc playlist khác. Kết nối đúng trước khi tiếp tục.')
         self.update(item['id'], state='running', error='', retry_at='')
         try:

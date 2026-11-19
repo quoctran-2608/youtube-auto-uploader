@@ -17,6 +17,36 @@ class StartupTests(unittest.TestCase):
         # Dispose Tk cycles on the UI thread before another test starts workers.
         gc.collect()
 
+    def test_folder_mode_queues_destination_without_fixed_playlist(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            topic = root / 'Topic'
+            topic.mkdir()
+            (topic / 'clip.mp4').write_bytes(b'video')
+            with patch('app.local_directory', return_value=root), patch.object(UploaderApp, 'startup'):
+                app = UploaderApp()
+            try:
+                app.client.channel = {'id': 'demo', 'snippet': {'title': 'Channel'}}
+                app.client.channel_confirmed = True
+                app.by_folder.set(True)
+                app.folder.set(temp)
+                app.scan()
+                self.pump(app, lambda: len(app.rows) == 1 and not app.busy)
+                app.table.selection_set(app.table.get_children())
+                with patch('app.messagebox.askyesno', return_value=True) as confirm:
+                    app.upload_selected()
+                self.assertIn('Topic', confirm.call_args.args[1])
+                self.assertEqual(app.upload_queue.next()['playlist_id'], '')
+                app.client.upload_or_resume = MagicMock(return_value={
+                    'id': 1, 'video_id': 'abcdefghijk', 'state': 'Uploaded', 'verified': 'yes', 'error': ''})
+                self.pump(app, lambda: app.upload_queue.all()[0]['state'] == 'done' and not app.busy)
+                self.assertEqual(app.client.upload_or_resume.call_args.args[0]['folder_playlist'], 'Topic')
+            finally:
+                for identifier in app.tk.call('after', 'info'):
+                    app.after_cancel(identifier)
+                app.lock.close()
+                app.destroy()
+
     def test_auto_find_deletes_successful_clips_without_selection_after_one_confirmation(self):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)
