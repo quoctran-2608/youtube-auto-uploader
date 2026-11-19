@@ -144,6 +144,11 @@ class YouTubeTests(unittest.TestCase):
         members.delete.assert_called_once_with(id='old-member')
         self.assertEqual(self.history.get(record_id)['playlist_id'], 'folder-id')
         self.api.videos.return_value.insert.assert_not_called()
+        # A process exit between moving and saving the batch may replay this row.
+        members.list.return_value.execute.side_effect = None
+        members.list.return_value.execute.return_value = {'items': [{'id': 'verified-target'}]}
+        self.assertEqual(self.client.organize_video(old, 'Folder', True), 'folder-id')
+        members.delete.assert_called_once_with(id='old-member')
 
     def test_playlist_failure_persists_id_retry_does_not_upload(self):
         self.upload_response()

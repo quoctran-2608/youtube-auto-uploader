@@ -16,7 +16,7 @@ from storage import History, InstanceLock, SecretStore, Settings, local_director
 from youtube_client import YouTubeClient, friendly_error
 from upload_queue import UploadQueue, STATUS, estimate_remaining
 from diagnostics import error_advice, copy_for_inspection, delete_uploaded_files, find_uploaded_files
-from folder_playlists import folder_title, Mp3Index, plan_history
+from folder_playlists import folder_title, Mp3Index, plan_history, PlaylistBatch
 from storage import fingerprint
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
@@ -118,6 +118,7 @@ class UploaderApp(PreviewApp):
         self.settings.save()
         self.history = History(self.local)
         self.upload_queue = UploadQueue(self.history)
+        self.playlist_batch = PlaylistBatch(self.local)
         self.client = YouTubeClient(SecretStore(self.local), self.settings, self.history)
         self.busy = False
         self.events = queue.Queue()
@@ -130,7 +131,7 @@ class UploaderApp(PreviewApp):
         self.transfer_samples = []
         super().__init__()
         self.folder.set(self.settings.data.get('last_folder', ''))
-        self.title('YouTube Auto Uploader · v0.9')
+        self.title('YouTube Auto Uploader · v0.9.1')
         self.geometry('1040x700')
         self.minsize(880, 620)
         self.protocol('WM_DELETE_WINDOW', self.close)
@@ -223,6 +224,8 @@ class UploaderApp(PreviewApp):
         ttk.Label(container, textvariable=self.result, wraplength=960).pack(anchor='w', pady=(7, 0))
         self.eta = tk.StringVar(value='Dự kiến hoàn thành: chưa có hàng đợi.')
         ttk.Label(container, textvariable=self.eta, wraplength=960, foreground='#285b8d').pack(anchor='w', pady=(5, 0))
+        self.playlist_notice = tk.StringVar(value='')
+        self.playlist_notice_label = ttk.Label(container, textvariable=self.playlist_notice, wraplength=960, foreground='#285b8d')
         ttk.Label(container, textvariable=self.info, wraplength=960, foreground='#576779').pack(anchor='w', pady=(5, 0))
         self.table.bind('<<TreeviewSelect>>', self.selection_changed)
         self.table.bind('<Control-a>', lambda event: self.table.selection_set(self.table.get_children()))
@@ -509,11 +512,17 @@ class UploaderApp(PreviewApp):
         dialog = tk.Toplevel(self)
         dialog.title(title)
         dialog.geometry('850x440')
-        box = tk.Text(dialog, wrap='word', font=('Segoe UI', 10), padx=14, pady=14)
-        box.pack(fill='both', expand=True)
+        frame = ttk.Frame(dialog)
+        frame.pack(fill='both', expand=True)
+        box = tk.Text(frame, wrap='word', font=('Segoe UI', 10), padx=14, pady=14)
+        scroll = ttk.Scrollbar(frame, orient='vertical', command=box.yview)
+        box.configure(yscrollcommand=scroll.set)
+        scroll.pack(side='right', fill='y')
+        box.pack(side='left', fill='both', expand=True)
         box.insert('1.0', text)
         box.configure(state='disabled')
         ttk.Button(dialog, text='Đóng', command=dialog.destroy).pack(pady=8)
+        return dialog
 
     def delete_selected(self):
         if self.busy:
@@ -684,7 +693,13 @@ class UploaderApp(PreviewApp):
         self.info.set(f"Nguồn tên playlist: {folder or 'thư mục chứa MP4'}")
 
     def organize_history(self):
-        if self.busy or not self.ready(require_playlist=False):
+        if self.busy:
+            return
+        batch = self.playlist_batch.read()
+        if batch and any(item['state'] == 'pending' for item in batch['items']):
+            self.show_playlist_batch(batch)
+            return
+        if not self.ready(require_playlist=False):
             return
         dialog = tk.Toplevel(self)
         dialog.title('Sắp playlist video cũ')
@@ -707,6 +722,8 @@ class UploaderApp(PreviewApp):
 
         ttk.Button(panel, text='Dùng thư mục từng lưu trong lịch sử', command=lambda: start(False)).pack(fill='x', pady=4)
         ttk.Button(panel, text='Chọn thư mục MP3 để đối chiếu tên', command=lambda: start(True)).pack(fill='x', pady=4)
+        if batch:
+            ttk.Button(panel, text='Xem kết quả đợt trước', command=lambda: self.show_playlist_batch(batch)).pack(fill='x', pady=4)
         dialog.grab_set()
 
     def review_playlist_plan(self, proposals):
@@ -779,11 +796,11 @@ class UploaderApp(PreviewApp):
             move = remove_old.get()
             action = 'Chuyển playlist' if move else 'Thêm vào playlist đích'
             if not messagebox.askyesno(action, f'{action} cho {len(picked)} video?\n'
-                'Playlist mới được tạo ở chế độ Riêng tư. Video dùng lại Video ID hiện có.', parent=dialog):
+                'Playlist mới ở chế độ Riêng tư. App lưu đợt này và tự tiếp tục sau khi hạn mức được cấp lại.', parent=dialog):
                 return
+            self.playlist_batch.start(self.client.channel['id'], picked, move)
             dialog.destroy()
-            self.run_task(lambda: self.apply_playlist_plan(picked, move),
-                          lambda result: self.text_dialog('Kết quả sắp playlist', result))
+            self.run_playlist_batch(show_result=True)
 
         tree.bind('<ButtonRelease-1>', toggle)
         ttk.Button(buttons, text='Chọn tất cả đề xuất rõ ràng', command=select_suggestions).pack(side='left')
@@ -793,22 +810,86 @@ class UploaderApp(PreviewApp):
         apply.pack(side='right')
         dialog.grab_set()
 
-    def apply_playlist_plan(self, proposals, remove_old):
-        from youtube_client import quota_reason
-        results, completed = [], 0
-        for index, item in enumerate(proposals, 1):
-            record, target = item['record'], item['target']
-            self.events.put(('progress', (index - 1) * 100 / len(proposals), f'Đang sắp playlist {index}/{len(proposals)}…'))
-            try:
-                self.client.organize_video(record, target, remove_old)
-                completed += 1
-                results.append(f"✓ {record['title']} → {target}")
-            except Exception as error:
-                results.append(f"✕ {record['title']} → {target}\n{friendly_error(error)}")
-                if quota_reason(error) or not self.client.channel_confirmed:
-                    results.append(f'Dừng đợt này. Còn {len(proposals) - index} mục chưa xử lý. Hãy lập lại danh sách sau khi kết nối hoặc hạn mức khôi phục.')
-                    break
-        return f'Đã hoàn tất {completed}/{len(proposals)} video.\n\n' + '\n\n'.join(results)
+    def playlist_batch_summary(self, batch):
+        from datetime import datetime
+        done = sum(item['state'] == 'done' for item in batch['items'])
+        errors = sum(item['state'] == 'error' for item in batch['items'])
+        pending = sum(item['state'] == 'pending' for item in batch['items'])
+        summary = f'Sắp playlist — {done} hoàn tất · {pending} còn chờ · {errors} cần kiểm tra'
+        if batch['retry_at']:
+            retry = datetime.fromisoformat(batch['retry_at']).astimezone().strftime('%d/%m %H:%M')
+            summary += f'. Chờ hạn mức YouTube đến {retry} (giờ máy).'
+        elif pending and batch['reason']:
+            summary += '. Đợt đang tạm dừng, mở “Sắp playlist video cũ” để tiếp tục.'
+        return summary
+
+    def update_playlist_notice(self, batch):
+        if batch:
+            self.playlist_notice.set(self.playlist_batch_summary(batch))
+            self.playlist_notice_label.pack(anchor='w', pady=(4, 0))
+
+    def run_playlist_batch(self, show_result=False):
+        def done(batch):
+            self.update_playlist_notice(batch)
+            self.info.set(batch['reason'] or 'Đã xử lý xong đợt sắp playlist.')
+            self.progress['value'] = 100 * sum(item['state'] != 'pending' for item in batch['items']) / len(batch['items'])
+            if show_result:
+                self.show_playlist_batch(batch)
+        self.info.set('Đang sắp playlist…')
+        self.playlist_notice.set('Đang xử lý đợt sắp playlist đã lưu.')
+        self.playlist_notice_label.pack(anchor='w', pady=(4, 0))
+        self.run_task(lambda: self.playlist_batch.run(self.client,
+            lambda value, text: self.events.put(('progress', value, text))), done)
+
+    def show_playlist_batch(self, batch):
+        existing = getattr(self, 'playlist_batch_window', None)
+        if existing and existing.winfo_exists():
+            existing.destroy()
+        pending = any(item['state'] == 'pending' for item in batch['items'])
+        reason = '\n' + batch['reason'] if batch['reason'] else ''
+        lines = [self.playlist_batch_summary(batch) + reason]
+        if pending and batch['retry_at']:
+            lines.append('App tự chạy tiếp khi đến giờ, app đang mở và đúng kênh đã kết nối.')
+        for item in batch['items']:
+            symbol = {'done': '✓', 'error': '✕', 'pending': '●', 'cancelled': '—'}[item['state']]
+            lines.append(f"{symbol} {item['record']['title']} → {item['target']}" + ('\n' + item['detail'] if item['detail'] else ''))
+        dialog = self.text_dialog('Kết quả sắp playlist', '\n\n'.join(lines))
+        self.playlist_batch_window = dialog
+        if not pending:
+            return
+
+        def resume():
+            current = self.playlist_batch.read()
+            if self.busy or not self.ready(require_playlist=False):
+                return
+            if current['channel'] != self.client.channel['id']:
+                messagebox.showinfo('Kênh của đợt sắp playlist', 'Kết nối lại đúng kênh đã dùng để tạo đợt này.', parent=dialog)
+                return
+            if not self.playlist_batch.due(current):
+                messagebox.showinfo('Chờ hạn mức', self.playlist_batch_summary(current), parent=dialog)
+                return
+            dialog.destroy()
+            self.run_playlist_batch(show_result=True)
+
+        def cancel():
+            if self.busy or not messagebox.askyesno('Bỏ các mục còn chờ',
+                'Bỏ các mục chưa xử lý trong đợt này? Các mục đã hoàn tất sẽ được giữ.', parent=dialog):
+                return
+            if self.busy or not dialog.winfo_exists():
+                return
+            current = self.playlist_batch.read()
+            for item in current['items']:
+                if item['state'] == 'pending':
+                    item.update(state='cancelled', detail='Đã bỏ khỏi đợt')
+            current.update(retry_at='', reason='')
+            self.playlist_batch.save(current)
+            self.update_playlist_notice(current)
+            dialog.destroy()
+
+        actions = ttk.Frame(dialog)
+        actions.pack(fill='x', padx=12, pady=(0, 8))
+        ttk.Button(actions, text='Chạy tiếp đợt này', command=resume).pack(side='left')
+        ttk.Button(actions, text='Bỏ các mục còn chờ…', command=cancel).pack(side='right')
 
     def ready(self, require_playlist=True):
         if not self.client.channel or not self.client.channel_confirmed or (require_playlist and not self.client.playlist_id):
@@ -957,7 +1038,17 @@ class UploaderApp(PreviewApp):
 
     def queue_tick(self):
         review = getattr(self, 'playlist_review', None)
-        if not self.busy and not self.settings.data.get('queue_paused', False) and not (review and review.winfo_exists()):
+        reviewing = review and review.winfo_exists()
+        if not self.busy:
+            batch = self.playlist_batch.read()
+            self.update_playlist_notice(batch)
+            if (batch and batch['retry_at'] and self.playlist_batch.due(batch) and not reviewing
+                    and self.client.channel and self.client.channel_confirmed and self.client.channel['id'] == batch['channel']):
+                dialog = getattr(self, 'playlist_batch_window', None)
+                if dialog and dialog.winfo_exists():
+                    dialog.destroy()
+                self.run_playlist_batch()
+        if not self.busy and not self.settings.data.get('queue_paused', False) and not reviewing:
             item = self.upload_queue.next()
             if item and self.client.channel_confirmed:
                 if self.client.channel['id'] != item['channel_id'] or (item['playlist_id'] and self.client.playlist_id != item['playlist_id']):

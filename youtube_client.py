@@ -17,7 +17,7 @@ def quota_reason(error):
     try:
         status = error.resp.status
         reason = json.loads(error.content)['error']['errors'][0]['reason']
-        if (status, reason) in ((403, 'quotaExceeded'), (400, 'uploadLimitExceeded')):
+        if (status, reason) in ((403, 'quotaExceeded'), (403, 'dailyLimitExceeded'), (400, 'uploadLimitExceeded')):
             return reason
     except (ValueError, KeyError, IndexError, TypeError, AttributeError):
         pass
@@ -28,6 +28,10 @@ class QuotaWait(RuntimeError):
     def __init__(self, reason):
         self.reason = reason
         super().__init__(f'YouTube báo giới hạn: {reason}')
+
+
+class PlaylistUnavailable(ValueError):
+    pass
 
 
 def friendly_error(error):
@@ -225,7 +229,7 @@ class YouTubeClient:
                 self.playlist_id = ''
                 self.settings.data['playlist_id'] = ''
                 self.settings.save()
-            raise ValueError('Playlist đã đổi tên, bị xóa hoặc không thuộc đúng kênh. Kết nối lại.')
+            raise PlaylistUnavailable(f'Không xác minh được playlist {playlist_id} thuộc đúng kênh đang kết nối và đúng tên đã chọn.')
         return playlists[0]
 
     def folder_playlist(self, title):
@@ -262,10 +266,11 @@ class YouTubeClient:
         return next(self.playlist_entries(playlist_id, video_id), None) is not None
 
     def ensure_membership(self, playlist_id, video_id):
-        if not self.membership(playlist_id, video_id):
-            self.service.playlistItems().insert(part='snippet', body={'snippet': {
-                'playlistId': playlist_id,
-                'resourceId': {'kind': 'youtube#video', 'videoId': video_id}}}).execute()
+        if self.membership(playlist_id, video_id):
+            return
+        self.service.playlistItems().insert(part='snippet', body={'snippet': {
+            'playlistId': playlist_id,
+            'resourceId': {'kind': 'youtube#video', 'videoId': video_id}}}).execute()
         for attempt in range(4):
             if self.membership(playlist_id, video_id):
                 return
@@ -276,16 +281,23 @@ class YouTubeClient:
     def organize_video(self, record, title, remove_old):
         self.validate_channel()
         row = self.history.get(record['id'])
-        if (row['channel_id'] != self.channel['id'] or not row['video_id'] or
-                (row['video_id'], row['playlist_id']) != (record['video_id'], record['playlist_id'])):
+        if row['channel_id'] != self.channel['id'] or not row['video_id'] or row['video_id'] != record['video_id']:
             raise ValueError('Lịch sử đã thay đổi hoặc thuộc kênh khác. Hãy lập lại danh sách.')
         items = self.service.videos().list(part='snippet,status', id=row['video_id']).execute().get('items', [])
         if (len(items) != 1 or items[0]['snippet']['channelId'] != row['channel_id'] or
                 items[0].get('status', {}).get('uploadStatus') in ('deleted', 'failed', 'rejected')):
             raise ValueError('Video không còn khả dụng trên kênh đang kết nối.')
         old = row['playlist_id']
+        if old != record['playlist_id']:
+            if old and self.owned_playlist(old)['snippet']['title'] == title and self.membership(old, row['video_id']):
+                return old
+            raise ValueError('Playlist trong lịch sử đã thay đổi. Hãy lập lại danh sách cho video này.')
         if remove_old and old:
-            self.owned_playlist(old)
+            try:
+                self.owned_playlist(old)
+            except PlaylistUnavailable as error:
+                raise ValueError(f'Playlist cũ {old} không còn khả dụng trên kênh này. '
+                                 'Để thêm riêng vào playlist đích, bỏ tích “Gỡ khỏi playlist cũ” khi lập đợt mới.') from error
         target = self.folder_playlist(title)
         self.owned_playlist(target, title)
         self.ensure_membership(target, row['video_id'])

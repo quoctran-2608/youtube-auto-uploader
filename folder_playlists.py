@@ -2,8 +2,16 @@
 from collections import defaultdict
 from difflib import SequenceMatcher
 from pathlib import Path, PureWindowsPath
+from datetime import datetime, timezone
+import json
 import re
 import unicodedata
+
+from google.auth.exceptions import GoogleAuthError
+
+from storage import atomic_write
+from upload_queue import pacific_midnight_after
+from youtube_client import friendly_error, quota_reason
 
 
 def source_path(value):
@@ -89,3 +97,58 @@ def _video_counts(records):
     for record in records:
         counts[record['video_id']] += 1
     return counts
+
+
+class PlaylistBatch:
+    """Checkpoint each approved move and retry only unfinished work."""
+
+    def __init__(self, folder):
+        self.path = folder / 'playlist-batch.json'
+
+    def read(self):
+        if self.path.exists():
+            return json.loads(self.path.read_text(encoding='utf-8'))
+        return None
+
+    def save(self, batch):
+        atomic_write(self.path, json.dumps(batch, ensure_ascii=False).encode('utf-8'))
+
+    def start(self, channel, proposals, remove_old):
+        items = [{'record': {key: item['record'][key] for key in ('id', 'video_id', 'playlist_id', 'title')},
+                  'target': item['target'], 'state': 'pending', 'detail': ''} for item in proposals]
+        self.save({'channel': channel, 'remove_old': remove_old, 'items': items, 'retry_at': '', 'reason': ''})
+
+    def due(self, batch, now=None):
+        return not batch['retry_at'] or datetime.fromisoformat(batch['retry_at']) <= (now or datetime.now(timezone.utc))
+
+    def run(self, client, progress, now=None):
+        batch = self.read()
+        if not batch or not client.channel or not client.channel_confirmed or client.channel['id'] != batch['channel']:
+            raise ValueError('Hãy kết nối đúng kênh của đợt sắp playlist.')
+        if not self.due(batch, now):
+            return batch
+        batch.update(retry_at='', reason='')
+        for index, item in enumerate(batch['items'], 1):
+            if item['state'] != 'pending':
+                continue
+            progress((index - 1) * 100 / len(batch['items']), f"Đang sắp playlist {index}/{len(batch['items'])}…")
+            try:
+                client.organize_video(item['record'], item['target'], batch['remove_old'])
+            except Exception as error:
+                detail = friendly_error(error)
+                status = getattr(getattr(error, 'resp', None), 'status', 0) or 0
+                if quota_reason(error) in ('quotaExceeded', 'dailyLimitExceeded'):
+                    batch['retry_at'] = pacific_midnight_after(now or datetime.now(timezone.utc)).isoformat()
+                    batch['reason'] = detail
+                elif not client.channel_confirmed or isinstance(error, (OSError, GoogleAuthError)) or status in (401, 429) or status >= 500:
+                    batch['reason'] = detail
+                else:
+                    item.update(state='error', detail=detail)
+                    self.save(batch)
+                    continue
+                self.save(batch)
+                break
+            else:
+                item.update(state='done', detail='')
+                self.save(batch)
+        return batch
