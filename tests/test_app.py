@@ -31,13 +31,19 @@ class StartupTests(unittest.TestCase):
                     self.pump(app, lambda: not app.busy)
                     popup.assert_not_called()
                 self.assertIn('Chờ hạn mức', app.connection.get())
+                app.show_settings()
+                self.assertTrue(app.settings_connect.instate(['disabled']))
+                self.assertTrue(app.settings_reauthorize.instate(['disabled']))
                 stored = Settings(folder).data['connection_quota_retry_at']
                 self.assertGreater(datetime.fromisoformat(stored), datetime.now(timezone.utc))
-                app.connect()
+                app.settings_connect.invoke()
                 app.client.connect.assert_called_once()
                 app.settings.data['connection_quota_retry_at'] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+                app.client.connect.side_effect = RuntimeError('Cần cấp quyền lại')
                 self.pump(app, lambda: app.client.connect.call_count == 2 and not app.busy)
                 self.assertEqual(app.client.connect.call_args.kwargs, {'interactive': False})
+                self.assertTrue(app.settings_connect.instate(['!disabled']))
+                self.assertIn('Cần cấp quyền lại', app.connection.get())
             finally:
                 for identifier in app.tk.call('after', 'info'):
                     app.after_cancel(identifier)

@@ -132,7 +132,7 @@ class UploaderApp(PreviewApp):
         self.transfer_samples = []
         super().__init__()
         self.folder.set(self.settings.data.get('last_folder', ''))
-        self.title('YouTube Auto Uploader · v0.9.2')
+        self.title('YouTube Auto Uploader · v0.9.3')
         self.geometry('1040x700')
         self.minsize(880, 620)
         self.protocol('WM_DELETE_WINDOW', self.close)
@@ -240,8 +240,13 @@ class UploaderApp(PreviewApp):
         settings.pack(fill='both', expand=True)
         ttk.Label(settings, text='Thiết lập một lần trên máy này', font=('Segoe UI', 14, 'bold')).pack(anchor='w', pady=(0, 12))
         ttk.Label(settings, text='Cấu hình email và playlist, nhập OAuth JSON, rồi kết nối.\nCác lần sau app tự kết nối và kiểm tra kênh đã lưu.', wraplength=570).pack(anchor='w', pady=(0, 12))
-        for title, command in [('Tài khoản & tên playlist', self.configure_account), ('Nhập OAuth JSON', self.import_credentials), ('Kết nối YouTube', self.connect), ('Cấp quyền lại / đổi kênh', lambda: self.connect(True)), ('Chọn playlist trùng tên', self.choose_playlist), ('Xuất CSV xem trước', self.export_csv)]:
-            self.action(settings, title, command, fill='x', pady=3)
+        ttk.Label(settings, textvariable=self.connection, wraplength=570, foreground='#285b8d').pack(anchor='w', pady=(0, 8))
+        self.action(settings, 'Tài khoản & tên playlist', self.configure_account, fill='x', pady=3)
+        self.action(settings, 'Nhập OAuth JSON', self.import_credentials, fill='x', pady=3)
+        self.settings_connect = self.action(settings, 'Kết nối YouTube', self.connect, fill='x', pady=3)
+        self.settings_reauthorize = self.action(settings, 'Cấp quyền lại / đổi kênh', lambda: self.connect(True), fill='x', pady=3)
+        self.action(settings, 'Chọn playlist trùng tên', self.choose_playlist, fill='x', pady=3)
+        self.action(settings, 'Xuất CSV xem trước', self.export_csv, fill='x', pady=3)
         self.confirmed = tk.BooleanVar(value=False)
         self.confirm_check = ttk.Checkbutton(settings, variable=self.confirmed, command=self.confirm_channel)
         self.defaults_label = tk.StringVar()
@@ -251,11 +256,17 @@ class UploaderApp(PreviewApp):
         self.update_controls()
 
     def show_settings(self):
-        self.settings_window.geometry(f'620x510+{max(0, self.winfo_x() + 50)}+{max(0, self.winfo_y() + 50)}')
+        self.update_controls()
+        self.settings_window.geometry(f'620x550+{max(0, self.winfo_x() + 50)}+{max(0, self.winfo_y() + 50)}')
         self.settings_window.deiconify()
         self.settings_window.lift()
 
     def update_controls(self):
+        quota_wait = self.connection_quota_wait_until()
+        if quota_wait:
+            self.show_connection_quota_wait()
+        for button in (self.settings_connect, self.settings_reauthorize):
+            button.configure(state='disabled' if self.busy or quota_wait else 'normal')
         if hasattr(self, 'upload_button'):
             ready = self.client.channel_confirmed and (self.client.playlist_id or self.by_folder.get()) and not self.busy and bool(self.table.selection()) and all(row['path'] not in self.deleted_local for row in self.selected_rows())
             self.upload_button.configure(state='normal' if ready else 'disabled')
@@ -275,11 +286,19 @@ class UploaderApp(PreviewApp):
             self.show_settings()
             self.after(100, self.scan_saved_folder)
 
-    def show_connection_quota_wait(self):
+    def connection_quota_wait_until(self):
         retry = self.settings.data.get('connection_quota_retry_at')
-        if not retry or datetime.fromisoformat(retry) <= datetime.now(timezone.utc):
+        if retry:
+            retry_at = datetime.fromisoformat(retry)
+            if retry_at > datetime.now(timezone.utc):
+                return retry_at
+        return None
+
+    def show_connection_quota_wait(self):
+        retry = self.connection_quota_wait_until()
+        if not retry:
             return False
-        local = datetime.fromisoformat(retry).astimezone().strftime('%d/%m %H:%M')
+        local = retry.astimezone().strftime('%d/%m %H:%M')
         self.connection.set(f'Chờ hạn mức YouTube API đến {local} (giờ máy). App sẽ tự kết nối lại.')
         self.reconnect.pack_forget()
         return True
@@ -354,7 +373,9 @@ class UploaderApp(PreviewApp):
                 else:
                     self.info.set(event[1])
                     self.confirmed.set(self.client.channel_confirmed)
-                    if not self.client.channel:
+                    if self.scan_after_failure:
+                        self.connection.set(f'Kết nối YouTube không thành công. {event[1]}')
+                    elif not self.client.channel:
                         self.connection.set('Chưa kết nối / kết nối thất bại')
                     self.update_playlist()
                     self.reconnect.pack(anchor='w', pady=(0, 8), before=self.count)
@@ -420,6 +441,7 @@ class UploaderApp(PreviewApp):
             'lưu ngoài thư mục dự án/Drive. Chưa upload video khi kết nối.\n\nTiếp tục mở kết nối?', parent=self):
             return
         self.confirmed.set(False)
+        self.connection.set('Đang kết nối YouTube… Nếu trình duyệt mở, hãy hoàn tất cấp quyền ở đó.')
         self.info.set('Đang kết nối. Bạn tự chọn tài khoản, kênh và cấp quyền trong trình duyệt. Chờ tối đa 5 phút.')
         self.run_task(lambda: self.client.connect(new_login), self.connected)
 
