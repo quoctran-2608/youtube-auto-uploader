@@ -16,11 +16,11 @@ def package():
         path = ROOT / name
         if not path.is_file() or path.is_symlink():
             raise ValueError(f'Missing or unsafe source file: {name}')
-    destination = ROOT / 'dist' / 'youtube-auto-uploader-v0.9.3.zip'
+    destination = ROOT / 'dist' / 'youtube-auto-uploader-v0.9.4.zip'
     destination.parent.mkdir(exist_ok=True)
     with ZipFile(destination, 'w', ZIP_DEFLATED) as archive:
         for name in FILES:
-            archive.write(ROOT / name, f'youtube-auto-uploader-v0.9.3/{name}')
+            archive.write(ROOT / name, f'youtube-auto-uploader-v0.9.4/{name}')
     return destination
 
 

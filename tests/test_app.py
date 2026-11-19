@@ -285,6 +285,22 @@ class StartupTests(unittest.TestCase):
                 app.upload_queue.update(queued['id'], state='attention')
                 app.refresh_statuses()
                 self.assertIn('Cần kiểm tra', app.table.set(item_id, 'state'))
+                # Reconnect is deferred by quota, but the table still uses the saved channel.
+                app.client.channel = None
+                app.client.channel_confirmed = False
+                app.settings.data.update(expected_email='owner@example.com', approved_email='owner@example.com',
+                                         approved_channel_id='demo')
+                for state, label in [('waiting', 'Chờ hạn mức'), ('done', 'Đã tải'), ('attention', 'Cần kiểm tra')]:
+                    app.upload_queue.update(queued['id'], state=state, error='Lỗi đã lưu' if state == 'attention' else '')
+                    app.refresh_statuses()
+                    self.assertIn(label, app.table.set(item_id, 'state'))
+                self.assertEqual(app.clip_diagnostic(row)[0], 'Lỗi đã lưu')
+                app.table.selection_set(item_id)
+                app.update_controls()
+                self.assertTrue(app.upload_button.instate(['disabled']))
+                app.settings.data['expected_email'] = 'other@example.com'
+                app.refresh_statuses()
+                self.assertIn('Chưa thêm', app.table.set(item_id, 'state'))
             finally:
                 for identifier in app.tk.call('after', 'info'):
                     app.after_cancel(identifier)

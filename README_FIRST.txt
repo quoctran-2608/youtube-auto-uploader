@@ -1,4 +1,4 @@
-YOUTUBE AUTO UPLOADER v0.9.3 — WINDOWS
+YOUTUBE AUTO UPLOADER v0.9.4 — WINDOWS
 
 1. Giải nén TOÀN BỘ ZIP, mở YouTubeAutoUploader.exe, giữ nguyên _internal.
 2. Lần đầu mở Cài đặt: nhập email Google và tên playlist, nhập OAuth JSON,

@@ -132,7 +132,7 @@ class UploaderApp(PreviewApp):
         self.transfer_samples = []
         super().__init__()
         self.folder.set(self.settings.data.get('last_folder', ''))
-        self.title('YouTube Auto Uploader · v0.9.3')
+        self.title('YouTube Auto Uploader · v0.9.4')
         self.geometry('1040x700')
         self.minsize(880, 620)
         self.protocol('WM_DELETE_WINDOW', self.close)
@@ -271,7 +271,7 @@ class UploaderApp(PreviewApp):
             ready = self.client.channel_confirmed and (self.client.playlist_id or self.by_folder.get()) and not self.busy and bool(self.table.selection()) and all(row['path'] not in self.deleted_local for row in self.selected_rows())
             self.upload_button.configure(state='normal' if ready else 'disabled')
         if hasattr(self, 'delete_button'):
-            eligible = not self.busy and any('done' in self.table.item(item, 'tags') for item in self.table.selection())
+            eligible = not self.busy and self.client.channel and any('done' in self.table.item(item, 'tags') for item in self.table.selection())
             self.delete_button.configure(state='normal' if eligible else 'disabled')
 
     def startup(self):
@@ -527,8 +527,17 @@ class UploaderApp(PreviewApp):
     def selected_rows(self):
         return [self.rows[self.table.index(item)] for item in self.table.selection()]
 
+    def status_channel_id(self):
+        """Use the last approved channel for local display while offline."""
+        if self.client.channel:
+            return self.client.channel['id']
+        data = self.settings.data
+        if data.get('expected_email') and data.get('approved_email') == data['expected_email']:
+            return data.get('approved_channel_id')
+        return None
+
     def clip_diagnostic(self, row):
-        channel = self.client.channel['id'] if self.client.channel else None
+        channel = self.status_channel_id()
         records = [r for r in self.history.recent(channel) if r['path'] == row['path']] if channel else []
         items = [i for i in self.upload_queue.all() if i['channel_id'] == channel and json.loads(i['row_json'])['path'] == row['path']]
         if items and items[-1]['history_id']:
@@ -576,6 +585,9 @@ class UploaderApp(PreviewApp):
 
     def delete_selected(self):
         if self.busy:
+            return
+        if not self.client.channel:
+            messagebox.showinfo('Xóa clip trên máy', 'Hãy kết nối YouTube trước khi xóa clip đã chọn.', parent=self)
             return
         rows = [self.rows[self.table.index(item)] for item in self.table.selection()
                 if 'done' in self.table.item(item, 'tags') and self.rows[self.table.index(item)]['path'] not in self.deleted_local]
@@ -1030,7 +1042,7 @@ class UploaderApp(PreviewApp):
     def refresh_statuses(self):
         if not hasattr(self, 'table'):
             return
-        channel = self.client.channel['id'] if self.client.channel else None
+        channel = self.status_channel_id()
         states = {}
         if channel:
             for record in reversed(self.history.recent(channel)):
